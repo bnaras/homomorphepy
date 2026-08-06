@@ -1,0 +1,187 @@
+{
+  "provenance": "docs/_recorded/record_dp_sweep.py, 2026-08-06",
+  "wall_clock_minutes": 7.3,
+  "collapse_fraction": 0.01,
+  "rows": [
+    {
+      "sigma": 0.0,
+      "method": "BFGS",
+      "max_abs_diff": 1.746563508819854e-07,
+      "sign_agreement": 5,
+      "n_queries": 96,
+      "epsilon": Infinity,
+      "coefficients": {
+        "GCB_sig": -0.26387143769817145,
+        "LN_sig": -0.25435919090353754,
+        "Prolif_sig": 0.3031257838055996,
+        "BMP6": 0.3036376372617437,
+        "MHC2_sig": -0.3191467126462245
+      },
+      "max_abs_beta": 0.3191467126462245,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": false
+    },
+    {
+      "sigma": 0.0,
+      "method": "Nelder-Mead",
+      "max_abs_diff": 0.002159363125870284,
+      "sign_agreement": 5,
+      "n_queries": 386,
+      "epsilon": Infinity,
+      "coefficients": {
+        "GCB_sig": -0.26425173455492257,
+        "LN_sig": -0.25380950714116507,
+        "Prolif_sig": 0.3052851382521385,
+        "BMP6": 0.3038483561626235,
+        "MHC2_sig": -0.318243589315711
+      },
+      "max_abs_beta": 0.318243589315711,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": false
+    },
+    {
+      "sigma": 0.0001,
+      "method": "BFGS",
+      "max_abs_diff": 0.3191473497462019,
+      "sign_agreement": 2,
+      "n_queries": 144,
+      "epsilon": 7200575823.109463,
+      "coefficients": {
+        "GCB_sig": 8.210026386694893e-07,
+        "LN_sig": 6.1383205756078e-07,
+        "Prolif_sig": 3.610840093570861e-07,
+        "BMP6": 1.6436319079310936e-06,
+        "MHC2_sig": 6.513622071836976e-07
+      },
+      "max_abs_beta": 1.6436319079310936e-06,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": true
+    },
+    {
+      "sigma": 0.0001,
+      "method": "Nelder-Mead",
+      "max_abs_diff": 0.009242822124317318,
+      "sign_agreement": 5,
+      "n_queries": 4000,
+      "epsilon": 200003034854.25876,
+      "coefficients": {
+        "GCB_sig": -0.25986723563615133,
+        "LN_sig": -0.25735305679508613,
+        "Prolif_sig": 0.2987690663286493,
+        "BMP6": 0.2943946944743381,
+        "MHC2_sig": -0.3244026586263381
+      },
+      "max_abs_beta": 0.3244026586263381,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": false
+    },
+    {
+      "sigma": 0.001,
+      "method": "BFGS",
+      "max_abs_diff": 0.31915647304878414,
+      "sign_agreement": 2,
+      "n_queries": 199,
+      "epsilon": 99567691.53813483,
+      "coefficients": {
+        "GCB_sig": 1.2303949794574059e-05,
+        "LN_sig": 9.24081007642351e-06,
+        "Prolif_sig": 5.34232268260539e-06,
+        "BMP6": 2.4463351307105476e-05,
+        "MHC2_sig": 9.77466478938072e-06
+      },
+      "max_abs_beta": 2.4463351307105476e-05,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": true
+    },
+    {
+      "sigma": 0.001,
+      "method": "Nelder-Mead",
+      "max_abs_diff": 0.11430746535849495,
+      "sign_agreement": 5,
+      "n_queries": 4000,
+      "epsilon": 2000303485.425877,
+      "coefficients": {
+        "GCB_sig": -0.24981040328361542,
+        "LN_sig": -0.28454207918403396,
+        "Prolif_sig": 0.18881830976777325,
+        "BMP6": 0.32428336421940596,
+        "MHC2_sig": -0.33363340792479024
+      },
+      "max_abs_beta": 0.33363340792479024,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": false
+    },
+    {
+      "sigma": 0.01,
+      "method": "BFGS",
+      "max_abs_diff": 0.31915649629881554,
+      "sign_agreement": 2,
+      "n_queries": 199,
+      "epsilon": 1001769.1538134823,
+      "coefficients": {
+        "GCB_sig": 1.2328825783169864e-05,
+        "LN_sig": 9.26542524752216e-06,
+        "Prolif_sig": 5.3469922184166065e-06,
+        "BMP6": 2.450012542282424e-05,
+        "MHC2_sig": 9.7979148208151e-06
+      },
+      "max_abs_beta": 2.450012542282424e-05,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": true
+    },
+    {
+      "sigma": 0.01,
+      "method": "Nelder-Mead",
+      "max_abs_diff": 0.3189366982578778,
+      "sign_agreement": 4,
+      "n_queries": 4000,
+      "epsilon": 20030348.5425877,
+      "coefficients": {
+        "GCB_sig": 0.0001400000457706655,
+        "LN_sig": -9.999996395793355e-05,
+        "Prolif_sig": 0.0001400000586522864,
+        "BMP6": 0.00013999998179940948,
+        "MHC2_sig": -0.00021000012611692914
+      },
+      "max_abs_beta": 0.00021000012611692914,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": true
+    },
+    {
+      "sigma": 0.1,
+      "method": "BFGS",
+      "max_abs_diff": 0.31915649748734576,
+      "sign_agreement": 2,
+      "n_queries": 199,
+      "epsilon": 10626.915381348226,
+      "coefficients": {
+        "GCB_sig": 1.2329878087346109e-05,
+        "LN_sig": 9.266815394239818e-06,
+        "Prolif_sig": 5.346835695960864e-06,
+        "BMP6": 2.450095926341178e-05,
+        "MHC2_sig": 9.799103351026334e-06
+      },
+      "max_abs_beta": 2.450095926341178e-05,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": true
+    },
+    {
+      "sigma": 0.1,
+      "method": "Nelder-Mead",
+      "max_abs_diff": 0.3191816983669234,
+      "sign_agreement": 2,
+      "n_queries": 4000,
+      "epsilon": 203034.8542587703,
+      "coefficients": {
+        "GCB_sig": 3.500000973525806e-05,
+        "LN_sig": 3.499999452073236e-05,
+        "Prolif_sig": 0.00013500002157537373,
+        "BMP6": 3.499996241038856e-05,
+        "MHC2_sig": 3.49999829286713e-05
+      },
+      "max_abs_beta": 0.00013500002157537373,
+      "reference_scale": 0.31914669838399473,
+      "collapsed": true
+    }
+  ]
+}

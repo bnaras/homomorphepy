@@ -152,20 +152,52 @@ Markdown(
 )
 ```
 
-The query cost of that robustness, and therefore its privacy cost:
+The largest σ at which each optimizer still produces a fit, and what
+that fit costs in queries:
 
 ```{python}
 #| echo: false
-q = {r["method"]: r["n_queries"] for r in rec["rows"] if r["sigma"] == 0.0}
+survived = {}
+for r in rec["rows"]:
+    if not r["collapsed"]:
+        survived[r["method"]] = max(survived.get(r["method"], 0.0), r["sigma"])
+
+q0 = {r["method"]: r["n_queries"] for r in rec["rows"] if r["sigma"] == 0.0}
+smallest_nonzero = min(r["sigma"] for r in rec["rows"] if r["sigma"] > 0)
+nm_collapse = min(
+    r["sigma"] for r in rec["rows"]
+    if r["method"] == "Nelder-Mead" and r["collapsed"]
+)
 Markdown(
-    "| optimizer | objective evaluations at σ=0 |\n|---|---|\n"
-    + "\n".join(f"| {m} | {n} |" for m, n in q.items())
+    "| optimizer | largest σ still fitting | first σ that collapses "
+    "| evaluations at σ=0 |\n|---|---|---|---|\n"
+    + "\n".join(
+        f"| {m} | {survived[m]:g} "
+        f"| {min((r['sigma'] for r in rec['rows'] if r['method'] == m and r['collapsed']), default=float('nan')):g} "
+        f"| {q0[m]} |"
+        for m in q0
+    )
 )
 ```
 
-Gradient-free search tolerates far more noise, at many times the
-queries — and therefore many times the privacy budget at equal
-$\sigma$. That trade is the whole point.
+The sweep brackets rather than pins these thresholds, so read them as
+bounds. BFGS collapses already at the smallest non-zero σ tested,
+`{python} f"{smallest_nonzero:g}"`, so its threshold lies somewhere
+below that. Nelder–Mead still fits at
+`{python} f"{survived['Nelder-Mead']:g}"` and collapses by
+`{python} f"{nm_collapse:g}"`, putting its threshold in between. The
+gap is therefore **more than one order of magnitude**; pinning it
+closer would need a finer grid than this sweep runs.
+
+That robustness is bought with queries:
+`{python} f"{q0['Nelder-Mead'] / q0['BFGS']:.0f}"`× as many objective
+evaluations at σ = 0, rising to the 4000-evaluation cap once noise
+sets in. Every evaluation is a query against the privacy budget, so
+tolerating more noise per query costs more queries — which is the
+trade the whole page is about.
+
+Both optimizers collapse eventually. Gradient-free search is more
+robust here, not immune.
 
 ## Why widening the step does not rescue it
 
