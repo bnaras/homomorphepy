@@ -1,0 +1,89 @@
+---
+title: "Maximum likelihood"
+subtitle: "An unmodified optimizer, an encrypted objective"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+Three sites count adverse events. None will share its counts, but all
+want the joint maximum-likelihood estimate of the underlying rate.
+
+The point of this example is what *doesn't* happen. SciPy's optimizer
+is not modified, not wrapped in anything clever, and not told that
+encryption is involved. It is handed an objective function; each time
+it calls that function, three per-site log-likelihoods are encrypted,
+summed homomorphically, and the total decrypted.
+
+```{python}
+from homomorphepy.examples import mle
+
+fit = mle.run()
+```
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+lo, hi = fit.ci()
+Markdown(f"""
+| | value |
+|---|---|
+| site sizes | {fit.site_sizes} (n = {fit.n_total}) |
+| **encrypted MLE** | **{fit.lambda_encrypted:.6f}** |
+| pooled cleartext MLE | {fit.lambda_pooled:.6f} |
+| difference | {fit.abs_difference:.2e} |
+| standard error | {fit.std_error:.4f} |
+| 95% CI | ({lo:.4f}, {hi:.4f}) |
+| objective evaluations | {fit.n_objective_calls} |
+""")
+```
+
+The encrypted estimate is `{python} f"{fit.lambda_encrypted:.6f}"`
+against a pooled cleartext value of
+`{python} f"{fit.lambda_pooled:.6f}"` — a difference of
+`{python} f"{fit.abs_difference:.1e}"`.
+
+Each of those `{python} fit.n_objective_calls` evaluations was a full
+encrypt / homomorphic-sum / decrypt round.
+
+## The comparison is exact, not another fit
+
+For a Poisson rate the maximum-likelihood estimate is the sample mean
+in closed form. The reference here is therefore the arithmetic mean of
+the pooled counts, not a second numerical optimization — so the only
+thing under test is the path through encryption.
+
+## Where the standard error comes from
+
+Not from the optimizer's internal curvature estimate. BFGS accumulates
+an approximation to the inverse Hessian as a *search* device, and it
+is well known to be an unreliable variance estimate. The SE reported
+above is the analytic Fisher information for a Poisson rate,
+$\sqrt{\hat\lambda/n}$.
+
+```{python}
+import math
+
+analytic = math.sqrt(fit.lambda_encrypted / fit.n_total)
+assert math.isclose(fit.std_error, analytic, rel_tol=1e-12)
+```
+
+## A caveat that is easy to state wrongly
+
+A review of this port predicted that SciPy's default finite-difference
+step (~1.5e-8) would fall below the CKKS noise floor and leave the
+optimizer differentiating noise.
+
+Measured, that does not happen at these parameters. The decrypted
+objective is accurate to about 1e-13 on a value of magnitude 100, so
+the implied gradient noise at the default step is ~1.7e-6 against a
+true gradient of ~0.78 — five orders of margin. Both the default and
+the widened step converge.
+
+The step is nonetheless matched to R's `ndeps = 1e-3`, for
+comparability rather than necessity. It becomes genuinely
+load-bearing only when [differential privacy](dp.qmd) adds noise many
+orders larger than CKKS's.

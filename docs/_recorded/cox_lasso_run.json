@@ -1,0 +1,13 @@
+{
+  "provenance": "python -m homomorphepy.examples.cox_lasso, 2026-08-06",
+  "wall_clock_minutes": 26.7,
+  "n_iter_python": 147,
+  "n_iter_r": 147,
+  "nonzero_python": 38,
+  "nonzero_r": 38,
+  "max_abs_admm_vs_r_zenc": 1.556e-07,
+  "max_abs_admm_vs_r_zref": 1.437e-07,
+  "max_abs_central_vs_r_agg": 1.991e-07,
+  "pool_agree_mu": 5e-16,
+  "pool_agree_sigma": 2.83e-15
+}

@@ -1,0 +1,46 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "homomorphepy"
+  description: "Multi-site privacy-preserving statistics over homomorphic encryption"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - text: Examples
+        menu:
+          - aggregation.qmd
+          - query-count.qmd
+          - mle.qmd
+          - secure-inference.qmd
+          - cox.qmd
+          - consensus-admm.qmd
+          - cox-lasso.qmd
+          - dp.qmd
+      - href: parity.qmd
+        text: Parity with R
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-fold: false
+    df-print: kable
+
+# Documents execute at render time: every number in the prose comes
+# from code that ran, never from a value typed by hand. `freeze`
+# stays false so a stale cache cannot silently outlive the code.
+execute:
+  freeze: false
+  warning: false
+
+# Cap OpenMP before the extension module loads. This has to be process
+# level rather than in a chunk, because OpenFHE latches its thread
+# count when the shared library is first imported.
+jupyter:
+  kernelspec:
+    name: python3
+    language: python
+    display_name: Python 3

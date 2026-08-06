@@ -1,0 +1,73 @@
+---
+title: "Query counting"
+subtitle: "The same count, with no party able to decrypt"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+[Aggregation](aggregation.qmd) left one weakness: the coordinator held
+the secret key, so the protocol depended on it only ever seeing the
+sum. Here the key is generated *n-of-n* — each site holds a share, and
+recovering any plaintext requires a partial decryption from every
+site. No party, coordinator included, can decrypt alone.
+
+## Setting up the shared key
+
+The sites chain their key generation. The first produces a keypair;
+each subsequent site derives the joint public key from its
+predecessor's while keeping its own share. The final public key
+encrypts for the group.
+
+```{python}
+from homomorphepy.examples import query_count
+
+result = query_count.run()
+```
+
+The query is `{python} result.query`, evaluated by each site on its
+own rows.
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+m = result.master
+Markdown(f"""
+| | value |
+|---|---|
+| sites | {len(m.sites)} |
+| per-site counts *(no party sees these)* | {result.per_site_cleartext} |
+| **recovered total** | **{result.total_encrypted}** |
+| computed independently by R | {result.r_expected_total} |
+| shares held by the coordinator | {0 if not hasattr(m, 'secret_share') else 'some'} |
+""")
+```
+
+## Agreement with R
+
+This is the tightest cross-language check in the package. Both
+implementations evaluate the same query on the same rows, and because
+BFV is exact, the answers are integers that must match — not values
+within a tolerance.
+
+```{python}
+assert result.total_encrypted == result.r_expected_total
+assert result.per_site_cleartext == result.r_expected_per_site
+```
+
+R recovers `{python} result.r_expected_total`; Python recovers
+`{python} result.total_encrypted`.
+
+## What replaced the old construction
+
+The Paillier-era version of this protocol needed two extra
+*non-cooperating parties* and an additive masking dance to reach a
+comparable guarantee, because Paillier has a single decryption key.
+Threshold FHE obtains it directly: the key is split, and the masking
+machinery disappears.
+
+That machinery is now frozen in homomorpheR and absent from
+homomorphepy entirely.

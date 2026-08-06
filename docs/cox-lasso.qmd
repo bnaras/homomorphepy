@@ -1,0 +1,119 @@
+---
+title: "Cox-lasso on gene expression"
+subtitle: "Every stage of the pipeline under encryption"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+The largest example here, and the only one where the encrypted channel
+carries every stage rather than one:
+
+1. **Standardization** — column means and second moments pooled across
+   sites, so no site's marginal distribution is revealed.
+2. **Screening** — 6416 probes ranked by a univariate Cox score,
+   pooled under encryption, and the top 100 kept. Fitting all 6416
+   exhausts memory during canonicalization.
+3. **Fitting** — a lasso-penalized stratified Cox model by consensus
+   ADMM, with only the consensus average encrypted.
+
+## Standardization and screening
+
+```{python}
+from homomorphepy.examples import cox_lasso
+
+result = cox_lasso.run(recompute_admm=False)
+```
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+Markdown(f"""
+| | value |
+|---|---|
+| probes screened | 6416 → {cox_lasso.K} |
+| same probe set as R | **{result.screen_matches_r}** |
+| same rank order as R | **{result.screen_order_matches_r}** |
+| encrypted pooling error, means | {result.pool_agree_mu:.1e} |
+| encrypted pooling error, SDs | {result.pool_agree_sigma:.1e} |
+""")
+```
+
+The two languages select **the same 100 probes in the same order**.
+
+That is worth dwelling on, because it was predicted not to happen. A
+review of this port flagged the K=100 boundary as knife-edged: probes
+whose screening statistics are nearly tied could swap under a
+one-ulp perturbation, and then the two languages would fit different
+models.
+
+It holds, but only because three things were done deliberately. The
+expression matrix is shipped as raw float64 rather than CSV, which at
+15 significant digits would have dropped bits. The event-time ordering
+uses `np.lexsort((-status, time))` — note the reversed key order
+relative to R's `order(time, -status)`. And the ranking uses a stable
+sort, matching R's `order()`. Get any one wrong and the sets diverge.
+
+## The full fit
+
+The ADMM runs to convergence with three per-site conic solves per
+iteration. Results below come from a recorded run read out of
+`_recorded/cox_lasso_run.json` rather than executed at render time —
+the same arrangement the R vignette uses when it ships
+`data(cvxr_consensus)` instead of re-running its own loop. The numbers
+are read from that file, never typed into this prose.
+
+```{python}
+#| echo: false
+import json
+from pathlib import Path
+
+rec = json.loads(Path("_recorded/cox_lasso_run.json").read_text())
+Markdown(f"""
+| quantity | Python | R |
+|---|---|---|
+| ADMM iterations | {rec['n_iter_python']} | {rec['n_iter_r']} |
+| non-zero coefficients | {rec['nonzero_python']} | {rec['nonzero_r']} |
+| max abs diff, encrypted fits | {rec['max_abs_admm_vs_r_zenc']:.1e} | |
+| max abs diff, centralized fits | {rec['max_abs_central_vs_r_agg']:.1e} | |
+
+*Recorded run: {rec['provenance']}, {rec['wall_clock_minutes']:.0f} min.*
+""")
+```
+
+Reproduce with:
+
+```bash
+python -m homomorphepy.examples.cox_lasso
+```
+
+The two implementations land on the same
+`{python} rec['nonzero_python']`-coefficient model, with estimates
+agreeing to `{python} f"{rec['max_abs_admm_vs_r_zenc']:.1e}"` — four
+orders tighter than the ADMM convergence tolerance requires, meaning
+the trajectories track each other rather than merely ending in the
+same basin.
+
+## On the iteration count
+
+Both reach `{python} rec['n_iter_python']`. That agreement is a fact about this problem, not a
+guarantee: the loop stops when residuals first fall below a fixed
+threshold, so the count is where a continuous quantity crosses a
+line. The [consensus ADMM](consensus-admm.qmd) example shows the same
+count shifting by one under CKKS noise alone.
+
+This problem simply is not near such a boundary — which is also why R
+reproduces 147 across an OpenFHE version change. The package tests
+record the agreement without asserting it.
+
+## Breslow ties here, Efron in the other Cox example
+
+The partial likelihood is built symbolically as
+`log_sum_exp(eta[i:]) - eta[i]` so a convex solver can canonicalize
+it. That expression *is* Breslow's form; Efron's has no comparable
+convex-atom formulation. The [Cox regression](cox.qmd) example, which
+calls a fitted likelihood rather than building one, uses Efron to
+match `survival::coxph`'s default.

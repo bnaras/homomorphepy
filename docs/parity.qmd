@@ -1,0 +1,105 @@
+---
+title: "Parity with R"
+subtitle: "Where the two languages agree, and where they cannot"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+`homomorphepy` and `homomorpheR` sit on the same OpenFHE library and
+run the same examples. That does not make every number comparable, and
+being clear about which kind of agreement applies where is the
+difference between a meaningful check and a misleading one.
+
+## Three kinds of agreement
+
+**Exact.** BFV does exact integer arithmetic, so a count computed in
+either language is *the same integer*. Asserted with `==`.
+
+**Within-language cryptographic.** An encrypted result against its own
+plaintext reference, on the same data. This is the actual
+cryptographic claim, and it holds at CKKS precision — typically
+1e-13 to 1e-6 depending on circuit depth.
+
+**Cross-language statistical.** A fitted estimate against another
+language's fitted estimate. Two optimizers with different
+implementations do not stop in the same place even when asked the same
+question, so the tolerance here is statistical — best stated in
+standard errors, not absolute units.
+
+Conflating the last two is how a solver difference gets misreported as
+crypto noise.
+
+## What is verified
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+Markdown("""
+| example | comparison | result |
+|---|---|---|
+| Query counting | exact integer, vs R | **identical** (11 = 11) |
+| Cox-lasso screening | probe set + rank order, vs R | **identical**, 100/100 |
+| Cox-lasso coefficients | vs R's encrypted fit | 1.6e-07 |
+| Cox-lasso centralized | vs R's centralized fit | 2.0e-07 |
+| Cox partial likelihood | vs `coxph(init=β, iter.max=0)` | ~1e-12 over 20 β vectors |
+| Cox regression | vs centralized fit | ~1e-03 of a standard error |
+| Consensus ADMM | encrypted vs plaintext | 1e-8 to 2e-6 |
+| Encrypted pooling | vs cleartext moments | 5e-16 |
+""")
+```
+
+## Where the data comes from
+
+**Real data is shipped.** The DLBCL cohort is measured, not drawn, so
+both languages read the same bytes. The expression matrix travels as
+raw little-endian float64 with a checksum over the uncompressed
+content — CSV at 15 significant digits would lose bits, and the
+screening step is sensitive enough for that to matter.
+
+**Simulated data is re-simulated.** R's `rpois`, `rbinom` and `sample`
+are different algorithms from NumPy's, so no seed makes the two agree.
+Rather than replay R's draws everywhere, the simulated examples draw
+their own. The claim then becomes the stronger one: the method works
+on *whatever data you have*, not on one blessed dataset. R's exact
+draws remain available for value-level comparison when that is
+specifically the point.
+
+## What cannot agree, and why that is fine
+
+**Differentially private runs.** Fresh noise every query means two
+runs disagree *within* a language. Only distributional behaviour is
+comparable.
+
+**Iteration counts.** A loop stopping when a residual first falls
+below a fixed threshold reports where a continuous quantity crossed a
+line. CKKS noise alone shifts it by one; redrawing the data moves it
+further. The Cox-lasso example happens to reach 147 in both languages
+and that is recorded, not asserted.
+
+**Categorical ordering is not left to chance.** Site order is protocol
+semantics — sites are visited in order and the first is the lead
+decryptor — so the exported data carries its category order explicitly
+and the loader asserts it. A `groupby` that sorted alphabetically
+would silently permute the protocol.
+
+```{python}
+from homomorphepy import site_order
+site_order()
+```
+
+## Known gaps in the Python binding
+
+Three, all worked around rather than blocking:
+
+| gap | consequence | workaround |
+|---|---|---|
+| `Ciphertext` binds only `__add__` | `ct * 2`, `ct - ct`, `-ct` raise `TypeError` | a wrapper supplying the full operator group |
+| No thread-control binding | no runtime cap on OpenMP | `OMP_NUM_THREADS` before first import |
+| `GetSchemeId` not bound | a context cannot report its own scheme | the wrapper records it at construction |
+
+These are filed as findings against `openfhe-python`, not defects in
+this package.

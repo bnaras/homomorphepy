@@ -1,0 +1,109 @@
+---
+title: "Differential privacy"
+subtitle: "What it costs to add DP on top"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+::: {.callout-important}
+## A demonstration, not a recommendation
+
+The threshold-FHE protocols in the other examples are *lossless*: they
+release the exact aggregate and leak nothing else. Differential
+privacy releases a deliberately corrupted aggregate, to bound what
+repeated queries can reveal. This page shows what that costs. It is
+not advice to add it.
+:::
+
+Each of the $N$ sites adds $\mathcal{N}(0, \sigma^2/N)$ to its own
+contribution before encrypting, so the decrypted aggregate carries
+$\mathcal{N}(0, \sigma^2)$ exactly. Nobody holds the noiseless value
+at any point — an aggregator that is compromised sees ciphertexts of
+*already noised* contributions.
+
+## The accounting
+
+Composition is zero-concentrated DP: a Gaussian release is
+$\rho = (\Delta/\sigma)^2/2$-zCDP, $T$ queries compose to $T\rho$, and
+$\varepsilon = \rho + 2\sqrt{\rho\log(1/\delta)}$.
+
+```{python}
+from homomorphepy.examples import dp
+
+few = dp.budget(n_queries=150, sigma=1e-2)
+many = dp.budget(n_queries=4000, sigma=1e-2)
+```
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+Markdown(f"""
+| queries | σ | ρ total | ε at δ=1e-5 |
+|---|---|---|---|
+| {few['n_queries']} | {few['sigma']:g} | {few['rho_total']:.3g} | {few['epsilon']:.3g} |
+| {many['n_queries']} | {many['sigma']:g} | {many['rho_total']:.3g} | {many['epsilon']:.3g} |
+""")
+```
+
+Sensitivity $\Delta = 1$ is a placeholder throughout, as in the R
+vignettes. Deriving a defensible sensitivity bound for a Cox partial
+likelihood is a separate problem and not attempted here.
+
+## Why gradient-based optimizers break first
+
+A finite-difference gradient divides a difference of noisy function
+values by the step $h$, so function-value noise $\sigma$ becomes
+gradient noise of roughly $\sigma\sqrt{2}/(2h)$ — an amplification of
+`{python} f"{dp.amplification_factor(1e-3):.0f}"`× at $h = 10^{-3}$.
+Near the optimum the true gradient is small and that noise dominates.
+
+```{python}
+#| echo: false
+Markdown(f"""
+| finite-difference step | amplification |
+|---|---|
+| 1e-3 (R's `optim` default) | {dp.amplification_factor(1e-3):.0f}× |
+| 1.49e-8 (SciPy's default) | {dp.amplification_factor(1.49e-8):.1e}× |
+""")
+```
+
+Measured at the DLBCL Cox fit, against the centralized estimate:
+
+| σ | BFGS (finite-difference gradient) | Nelder–Mead (gradient-free) |
+|---|---|---|
+| 0 | exact, 5/5 signs correct | 0.002, 5/5 |
+| 1e-4 | **collapsed to β = 0** | 0.009, 5/5 |
+| 1e-3 | collapsed | 0.114, 5/5 |
+| 1e-2 | collapsed | 0.319, 4/5 |
+| 1e-1 | collapsed | collapsed, 2/5 |
+
+Gradient-free search tolerates roughly three orders of magnitude more
+noise — at about 25× the queries, and therefore about 25× the privacy
+budget at equal $\sigma$. That trade is the whole point.
+
+## A cross-language difference worth knowing
+
+R's BFGS stays usable to $\sigma = 10^{-2}$; SciPy's collapses by
+$10^{-5}$. It is **not** the finite-difference step: matching R's
+`ndeps = 1e-3` produces a perfectly good gradient — correct
+magnitudes and signs — and the optimizer still returns its starting
+point.
+
+The cause is the line search. R's `optim` accepts a step on a
+*function-value* decrease alone. SciPy's BFGS uses a Wolfe line
+search whose curvature condition evaluates the *gradient* at each
+trial point, so the $1/h$ amplification hits the line search itself
+rather than only the search direction. No step size rescues that.
+
+SciPy is therefore strictly more fragile here — which, if anything,
+strengthens the underlying claim: any optimizer that infers
+derivatives by differencing nearby function values will meet this
+failure mode against any DP mechanism adding enough noise to be
+meaningful.
+
+None of this is a defect in the cryptographic protocol. The protocol
+releases exactly what it promises.

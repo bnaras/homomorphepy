@@ -1,0 +1,87 @@
+---
+title: "Cox regression"
+subtitle: "Survival analysis across three hospitals"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+The DLBCL cohort of Rosenwald et al. (2002), split by molecular
+subgroup. GCB, ABC and Type III lymphomas arise from different cells
+of origin and tend to be diagnosed at different referral centers, so
+using the subgroup as the site boundary is operationally realistic
+rather than a convenience — and it produces genuinely imbalanced
+sites.
+
+Each site computes its own Cox partial log-likelihood at the current
+coefficient vector. Patient rows never leave.
+
+```{python}
+from homomorphepy.examples import cox
+
+fit = cox.run(backend="threshold")
+```
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+
+sizes = " · ".join(f"{k} n={v} ({fit.site_events[k]} events)"
+                   for k, v in fit.site_sizes.items())
+rows = "\n".join(
+    f"| `{r['coefficient']}` | {r['distributed_encrypted']:.6f} "
+    f"| {r['aggregated_cleartext']:.6f} | {r['abs_diff']:.1e} |"
+    for r in fit.table()
+)
+Markdown(
+    f"Sites: {sizes}\n\n"
+    "| coefficient | distributed, encrypted | centralized cleartext | difference |\n"
+    "|---|---|---|---|\n" + rows
+)
+```
+
+The distributed encrypted fit and the centralized fit agree to
+`{python} f"{fit.max_abs_difference:.1e}"`, over
+`{python} fit.n_objective_calls` objective evaluations — each one a
+full encrypt, homomorphic sum, and n-of-n threshold decryption across
+the three sites.
+
+Log-likelihood: `{python} f"{fit.loglik_encrypted:.6f}"` encrypted
+against `{python} f"{fit.loglik_centralized:.6f}"` centralized.
+
+## Only the master class changes
+
+The single-decrypter and threshold versions differ in one line. The
+optimizer, the objective, the site functions and the protocol runner
+are identical; swapping the backend swaps who can decrypt.
+
+```{python}
+ckks_fit = cox.run(backend="ckks")
+```
+
+```{python}
+#| echo: false
+Markdown(f"""
+| backend | max diff vs centralized | can any single party decrypt? |
+|---|---|---|
+| single-decrypter CKKS | {ckks_fit.max_abs_difference:.1e} | yes, the master |
+| threshold (n-of-n) | {fit.max_abs_difference:.1e} | no |
+""")
+```
+
+## Two tie conventions, on purpose
+
+`survival::coxph` defaults to Efron's method for tied event times;
+`statsmodels` defaults to Breslow's. On this cohort, where follow-up
+is recorded to a tenth of a year across 235 patients, the two differ
+by up to 3.56 in pooled log-likelihood — a silent wrong answer, not an
+error, if the argument is forgotten.
+
+This example passes `ties="efron"` to match R. The
+[Cox-lasso](cox-lasso.qmd) example uses Breslow instead, because its
+partial likelihood is written symbolically for a convex solver and
+that form *is* Breslow's; Efron has no comparable formulation. The R
+vignettes make exactly the same split.

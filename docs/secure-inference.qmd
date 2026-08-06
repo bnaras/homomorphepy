@@ -1,0 +1,87 @@
+---
+title: "Secure inference"
+subtitle: "Scoring patients a lab cannot see"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+A hospital holds patient biomarkers. A lab holds a proprietary risk
+model. Neither will show the other what it has.
+
+The hospital encrypts its biomarkers and sends the ciphertexts. The
+lab evaluates its model homomorphically and returns an encrypted
+score vector. The hospital decrypts.
+
+```{python}
+from homomorphepy.examples import secure_inference
+
+result = secure_inference.run()
+```
+
+## Packing
+
+All `{python} result.n_patients` patients are scored in four
+multiply-adds rather than eight separate evaluations. Each ciphertext
+holds *one biomarker across all patients* in its slots, so a single
+homomorphic multiply scales that biomarker for everyone at once. This
+SIMD layout is what makes CKKS practical for problems of this shape.
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+
+rows = "\n".join(
+    f"| {i} | {enc:.4f} | {clear:.4f} | {band} |"
+    for i, (enc, clear, band) in enumerate(
+        zip(result.scores_encrypted, result.scores_cleartext, result.bands), 1
+    )
+)
+Markdown("| patient | encrypted score | cleartext score | risk |\n"
+         "|---|---|---|---|\n" + rows)
+```
+
+Maximum deviation from the cleartext computation:
+`{python} f"{result.max_error:.1e}"`.
+
+## What the protocol delivers
+
+Two things, both necessary for a model-as-a-service deployment where
+the lab is not trusted with patient data:
+
+* biomarker values never appear in cleartext outside the hospital;
+* the lab's coefficients never reach the hospital in cleartext.
+
+## What it does not deliver
+
+Neither is sufficient, and it would be dishonest to stop here. The
+hospital can query the lab repeatedly with inputs of its choosing and
+recover the coefficients by solving the resulting linear system. For a
+linear model with four weights and a bias, five well-chosen queries
+determine it exactly.
+
+```{python}
+attack = secure_inference.extract_model(n_queries=5)
+```
+
+```{python}
+#| echo: false
+Markdown(f"""
+| | value |
+|---|---|
+| queries used | {attack['n_queries']} |
+| max weight recovery error | {attack['max_weight_error']:.1e} |
+| bias recovery error | {attack['bias_error']:.1e} |
+""")
+```
+
+The coefficients come back to
+`{python} f"{attack['max_weight_error']:.0e}"`. Encryption is
+irrelevant to this attack, which is exactly the point: it operates on
+the *input-output behaviour* the protocol is designed to provide.
+
+The defenses are rate limiting, query auditing, or a model whose
+structure resists inversion — not more cryptography.

@@ -1,0 +1,81 @@
+---
+title: "homomorphepy"
+subtitle: "Multi-site privacy-preserving statistics over homomorphic encryption"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+import homomorphepy
+```
+
+`homomorphepy` is the Python twin of the R package
+[homomorpheR](https://github.com/bnaras/homomorpheR). Both sit on the
+same [OpenFHE](https://openfhe.org) C++ library and run the same
+worked examples, so a result can be checked in either language.
+
+Version `{python} homomorphepy.__version__`, wrapping OpenFHE 1.5.1.
+
+## The idea
+
+Several sites hold data they will not share. They are willing to
+compute a *joint* result, provided no party — including whoever
+coordinates the computation — learns anything about an individual
+site's contribution.
+
+Each site computes a summary of its own data, encrypts it, and sends
+the ciphertext. The coordinator adds the ciphertexts *without
+decrypting them* and recovers only the total. Under threshold keys the
+guarantee is stronger still: the decryption key is split across the
+sites, so no single party can decrypt anything at all.
+
+What makes this practical for statistics is that the analysis code
+does not change. An optimizer handed an objective that happens to
+route through encryption converges to the same estimate it would have
+reached on pooled data.
+
+## Examples
+
+Ordered by how much machinery they need.
+
+| Example | What it shows |
+|---|---|
+| [Aggregation](aggregation.qmd) | Encrypted counting. The simplest composition, and exact under BFV. |
+| [Query counting](query-count.qmd) | The same count under threshold keys, where nobody can decrypt alone. |
+| [Maximum likelihood](mle.qmd) | An unmodified optimizer driving an encrypted objective. |
+| [Secure inference](secure-inference.qmd) | A lab scoring patients it cannot see — and the attack this does *not* prevent. |
+| [Cox regression](cox.qmd) | Survival analysis across three hospitals, single-decrypter and threshold. |
+| [Consensus ADMM](consensus-admm.qmd) | Convex optimization where only the consensus step is encrypted. |
+| [Cox-lasso](cox-lasso.qmd) | The full pipeline on gene expression: encrypted standardization, screening, and fitting. |
+| [Differential privacy](dp.qmd) | What it costs to add DP on top — a demonstration, not a recommendation. |
+
+[Parity with R](parity.qmd) documents where the two languages agree
+exactly, where they agree statistically, and where they cannot agree
+at all.
+
+## Installing
+
+The statistical layer installs normally. The crypto backend does not:
+
+```bash
+pip install homomorphepy          # examples, fixtures, DP accounting
+```
+
+`openfhe` is an **optional** dependency because its published wheels
+are tagged `py3-none-any` while containing Linux/CPython-3.12
+binaries — `pip install` reports success on macOS and the import then
+fails. See the README for the working paths.
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+have = homomorphepy.have_backend()
+Markdown(
+    f"**This page was rendered with the crypto backend "
+    f"{'available' if have else 'absent'}.** "
+    + ("Every number below was computed through real encryption."
+       if have else
+       "Pages needing encryption will show their shipped results instead.")
+)
+```

@@ -1,0 +1,73 @@
+---
+title: "Aggregation"
+subtitle: "Counting across sites without revealing the counts"
+---
+
+```{python}
+#| echo: false
+import os
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+Three hospitals each hold a patient cohort. A researcher wants to know
+how many patients across all three match a clinical criterion. No
+hospital will disclose its own count.
+
+Each site counts locally, encrypts that single integer under the
+coordinator's public key, and sends the ciphertext. The coordinator
+adds the ciphertexts homomorphically and decrypts only the total.
+
+## The protocol
+
+```{python}
+from homomorphepy.examples import aggregation
+
+result = aggregation.run()
+```
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+
+Markdown(f"""
+| | value |
+|---|---|
+| site cohort sizes | {result.site_sizes} |
+| per-site counts *(never seen by the coordinator)* | {result.per_site_cleartext} |
+| **encrypted total** | **{result.total_encrypted}** |
+| cleartext total | {result.total_cleartext} |
+""")
+```
+
+The recovered total is `{python} result.total_encrypted`, matching the
+cleartext sum `{python} result.total_cleartext` **exactly**.
+
+## Why exactly, and not approximately
+
+The scheme here is BFV, which does exact integer arithmetic. A count
+is an integer, so the answer is the integer — not a value close to it.
+CKKS, used elsewhere in these examples for real-valued work, trades
+exactness for the ability to encrypt real numbers, and there
+comparisons carry a tolerance. Here `==` is the right test and the
+code asserts it.
+
+```{python}
+assert result.exact
+assert result.total_encrypted == sum(result.per_site_cleartext)
+```
+
+## What the coordinator learns
+
+Only the total. The per-site counts
+(`{python} str(result.per_site_cleartext)`) exist inside each site and
+in this document, which stands in for all three parties at once — but
+never in the coordinator's view of the protocol.
+
+There is a limit to that guarantee, and it is worth stating plainly:
+the coordinator holds the secret key. If a site's ciphertext were sent
+on its own, the coordinator *could* decrypt it. The protocol relies on
+the coordinator only ever seeing the sum.
+
+[Query counting](query-count.qmd) removes that reliance. There the key
+is split across sites, so the coordinator cannot decrypt anything
+alone — the same computation, a stronger guarantee.
