@@ -113,14 +113,14 @@ def _score_info_at_zero(X, time, status):
     Xo, so = X[order], status[order]
     n, p = Xo.shape
     U = np.zeros(p)
-    I = np.zeros(p)
+    info = np.zeros(p)
     for i in range(n):
         if so[i] == 1:
             risk = Xo[i:]
             mu = risk.mean(axis=0)
             U += Xo[i] - mu
-            I += ((risk - mu) ** 2).sum(axis=0) / risk.shape[0]
-    return U, I
+            info += ((risk - mu) ** 2).sum(axis=0) / risk.shape[0]
+    return U, info
 
 
 def _breslow_nll(beta, X, time, status):
@@ -178,11 +178,11 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
         master.decrypt(sum(master.encrypt(u) for u, _ in UI), length=p_raw),
         dtype=float,
     )
-    I = np.asarray(
+    info = np.asarray(
         master.decrypt(sum(master.encrypt(i) for _, i in UI), length=p_raw),
         dtype=float,
     )
-    Z = U / np.sqrt(np.maximum(I, np.finfo(float).eps))
+    Z = U / np.sqrt(np.maximum(info, np.finfo(float).eps))
     # kind="stable" reproduces R's order(); the default quicksort would
     # break ties differently. Result is 1-based to match R's indices.
     top_idx = np.argsort(-np.abs(Z), kind="stable")[:K] + 1
@@ -221,7 +221,9 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
         z_curr = np.zeros(K)
         n_sites = len(sites_KS)
 
+        n_iter = 0
         for it in range(1, MAX_ITER + 1):
+            n_iter = it
             for i, lp in enumerate(locals_):
                 lp["zp"].value = z_curr
                 lp["up"].value = site_u[i]
@@ -242,7 +244,7 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
             z_curr = z_new
             if primal < TOL and dual < TOL:
                 break
-        beta_admm, n_iter = z_curr, it
+        beta_admm = z_curr
 
     return CoxLassoResult(
         top_idx=top_idx,
