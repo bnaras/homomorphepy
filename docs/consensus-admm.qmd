@@ -87,31 +87,25 @@ approximation error, and nothing else.
 
 ## The solver is named, never inferred
 
-Every `solve()` call passes `solver=CLARABEL`, matching what the R
-vignette passes to `psolve()`. This is not fastidiousness. `cvxpy` and
-`CVXR` rank their installed solvers differently, so an automatic
-choice can silently differ between the two languages — and then an
-algorithm difference looks like a protocol bug. Worse, the automatic
-choice depends on *what happens to be installed*, so the same script
-can behave differently on another machine with nothing in the diff to
-explain it.
+Every `solve()` call passes `solver=CLARABEL` explicitly. This is not
+fastidiousness. `cvxpy` picks a solver from whatever is installed, so
+the same script can take a different numerical path on another machine
+with nothing in the diff to explain it — and an algorithm difference
+then looks like a protocol bug.
 
-The interoperable set is Clarabel, SCS, HiGHS and OSQP: solvers both
-ecosystems ship. Anything outside it has no counterpart on the R side.
+Naming the solver also keeps the ADMM trajectory reproducible, which
+matters here because the iteration count depends on where a continuous
+residual first crosses a fixed threshold.
 
 ## This example simulates its own data
 
 Unlike the gene-expression examples, the cohort here is drawn from a
-data-generating process rather than measured. There is no reason to
-replay R's exact random numbers, and doing so would make a weaker
-claim: that the method works on *one* dataset.
-
-Instead each run draws its own. Across several draws the encrypted fit
-tracks its own centralized fit every time, and ρ = 50 is selected
-every time — matching R's choice, which tells us the tuning is a
+data-generating process rather than measured, so each run draws its
+own. Across several draws the encrypted fit tracks its own centralized
+fit every time, and ρ = 50 is selected every time — the tuning is a
 property of the problem rather than of one sample.
 
 The iteration count, by contrast, moves between 19 and 23 purely by
 redrawing. It is where a continuous residual first crosses a fixed
-threshold, so it was never a quantity two languages could be expected
-to match — and indeed CKKS noise alone is enough to shift it by one.
+threshold, so it is a property of the sample rather than of the
+method — and CKKS noise alone is enough to shift it by one.

@@ -50,9 +50,9 @@ Markdown(f"""
 """)
 ```
 
-Sensitivity $\Delta = 1$ is a placeholder throughout, as in the R
-vignettes. Deriving a defensible sensitivity bound for a Cox partial
-likelihood is a separate problem and not attempted here.
+Sensitivity $\Delta = 1$ is a placeholder throughout. Deriving a
+defensible sensitivity bound for a Cox partial likelihood is a
+separate problem and not attempted here.
 
 ## Why gradient-based optimizers break first
 
@@ -67,7 +67,7 @@ Near the optimum the true gradient is small and that noise dominates.
 Markdown(f"""
 | finite-difference step | amplification |
 |---|---|
-| 1e-3 (R's `optim` default) | {dp.amplification_factor(1e-3):.0f}× |
+| 1e-3 | {dp.amplification_factor(1e-3):.0f}× |
 | 1.49e-8 (SciPy's default) | {dp.amplification_factor(1.49e-8):.1e}× |
 """)
 ```
@@ -86,25 +86,24 @@ Gradient-free search tolerates roughly three orders of magnitude more
 noise — at about 25× the queries, and therefore about 25× the privacy
 budget at equal $\sigma$. That trade is the whole point.
 
-## A cross-language difference worth knowing
+## Why widening the step does not rescue it
 
-R's BFGS stays usable to $\sigma = 10^{-2}$; SciPy's collapses by
-$10^{-5}$. It is **not** the finite-difference step: matching R's
-`ndeps = 1e-3` produces a perfectly good gradient — correct
-magnitudes and signs — and the optimizer still returns its starting
-point.
+The obvious remedy is a larger finite-difference step, since that
+shrinks the $1/h$ amplification. It does produce a good gradient —
+correct magnitudes and signs at $h = 10^{-3}$ — and the optimizer
+*still* returns its starting point.
 
-The cause is the line search. R's `optim` accepts a step on a
-*function-value* decrease alone. SciPy's BFGS uses a Wolfe line
-search whose curvature condition evaluates the *gradient* at each
-trial point, so the $1/h$ amplification hits the line search itself
-rather than only the search direction. No step size rescues that.
+The cause is the line search. SciPy's BFGS uses a Wolfe search whose
+curvature condition evaluates the **gradient** at each trial point, so
+the amplification hits the line search itself rather than only the
+search direction. No step size rescues that; the search cannot accept
+a step it cannot verify.
 
-SciPy is therefore strictly more fragile here — which, if anything,
-strengthens the underlying claim: any optimizer that infers
-derivatives by differencing nearby function values will meet this
-failure mode against any DP mechanism adding enough noise to be
-meaningful.
+Gradient-free search has no such condition to satisfy, which is why it
+survives noise three orders of magnitude larger. The general lesson:
+any optimizer that infers derivatives by differencing nearby function
+values will meet this failure mode against any DP mechanism adding
+enough noise to be meaningful.
 
 None of this is a defect in the cryptographic protocol. The protocol
 releases exactly what it promises.

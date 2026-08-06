@@ -1,0 +1,106 @@
+---
+title: "Precision"
+subtitle: "What it means for an encrypted answer to be correct"
+---
+
+```{python}
+#| include: false
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+"The encrypted computation gives the right answer" means different
+things in different examples, and being precise about which is the
+difference between a meaningful check and a misleading one.
+
+## Exact, for integer schemes
+
+BFV does exact integer arithmetic. A count computed under encryption
+is *the same integer* as the count computed in the clear — not a value
+near it. [Aggregation](aggregation.qmd) and [query
+counting](query-count.qmd) assert equality with `==`, and any
+tolerance there would be hiding a bug rather than accommodating one.
+
+## Approximate, for CKKS
+
+CKKS encrypts real numbers and trades exactness for that ability.
+Results carry an approximation error which grows with circuit depth
+and shrinks with the scaling factor. In practice, at the depths these
+examples use:
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+
+Markdown("""
+| computation | depth | observed error |
+|---|---|---|
+| pooled means and SDs across sites | 1 | ~5e-16 |
+| summed log-likelihood | 1 | ~1e-13 |
+| SIMD-packed linear score | 2 | ~2e-13 |
+| ADMM consensus average | 1 | 1e-8 – 2e-6 |
+""")
+```
+
+These are *within-language* comparisons: the encrypted result against
+the same computation performed in the clear on the same data. That is
+the actual cryptographic claim, and it is the tightest bound any
+example here can make.
+
+## Statistical, for fitted estimates
+
+When an optimizer runs through the encrypted channel, the estimate it
+returns is compared against a centralized fit. The relevant tolerance
+is not CKKS precision but *statistical*: two optimizers with different
+stopping rules do not halt at the same point even on identical data,
+and the difference between them is meaningless if it is small relative
+to the standard error.
+
+[Cox regression](cox.qmd) states its agreement in standard-error
+units for that reason. A difference of 1e-3 of one standard error is
+invisible in any reported result; quoting it as an absolute number
+would invite a reader to compare it against a CKKS error bound, which
+is a category mistake.
+
+## What cannot be compared
+
+**Differentially private runs.** [DP](dp.qmd) draws fresh noise on
+every query, so two runs of the same code on the same data disagree.
+Only distributional behaviour is comparable — the ordering of
+optimizers under noise, the shape of the degradation as σ grows.
+
+**Iteration counts.** A loop that stops when a residual first falls
+below a fixed threshold reports where a continuous quantity crossed a
+line. CKKS noise alone can shift it by one, and redrawing the data
+moves it further. It is a property of the sample, not of the method.
+
+## Where the data comes from
+
+**Measured data is shipped.** The DLBCL gene-expression cohort is a
+real dataset, so the examples that use it read the same bytes every
+time. The expression matrix travels as raw float64 with a checksum,
+because the [Cox-lasso](cox-lasso.qmd) screening step ranks 6416
+probes and keeps 100 — near-ties at that boundary can swap under a
+one-ulp perturbation, which text formatting would introduce.
+
+**Simulated data is drawn fresh.** The other examples generate their
+cohorts from a data-generating process on each run. The claim they
+make is that the encrypted protocol reproduces the cleartext answer
+*on whatever data it was given*, which is stronger than reproducing
+one particular dataset — and it is checked across several draws.
+
+## Categorical order is protocol semantics
+
+Sites are visited in a fixed order, and the first one is the lead
+decryptor in threshold decryption. The order is therefore declared in
+the shipped data and asserted on load, not left to whatever a
+`groupby` happens to produce:
+
+```{python}
+from homomorphepy import site_order
+
+site_order()
+```
+
+Sorting those alphabetically would silently permute the protocol.

@@ -151,17 +151,17 @@ the three sites. Log-likelihood
 
 ## Two tie conventions, on purpose
 
-`survival::coxph` defaults to Efron's method for tied event times;
-`statsmodels` defaults to Breslow's. On this cohort, where follow-up
-is recorded to a tenth of a year across 235 patients, the two differ
-by up to 3.56 in pooled log-likelihood — a silent wrong answer, not an
-error, if the argument is forgotten.
+Tied event times admit more than one treatment. Efron's method is the
+usual default in survival software; `statsmodels.PHReg` defaults to
+Breslow's. On this cohort, where follow-up is recorded to a tenth of a
+year across 235 patients, the two differ by up to 3.56 in pooled
+log-likelihood — a silent wrong answer, not an error, if the argument
+is forgotten.
 
-This example passes `ties="efron"` to match R. The
-[Cox-lasso](cox-lasso.qmd) example uses Breslow instead, because its
-partial likelihood is written symbolically for a convex solver and
-that form *is* Breslow's; Efron has no comparable formulation. The R
-vignettes make exactly the same split.
+This example passes `ties="efron"`. The [Cox-lasso](cox-lasso.qmd)
+example uses Breslow instead, because its partial likelihood is
+written symbolically for a convex solver and that form *is* Breslow's;
+Efron has no comparable convex-atom formulation.
 
 ## Caveat
 

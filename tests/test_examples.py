@@ -62,14 +62,20 @@ class TestQueryCount:
 
         return query_count.run()
 
-    def test_agrees_exactly_with_R(self, result):
-        # The genuine cross-language equality in this suite: same rows,
-        # same query, exact arithmetic, so the integers must match.
-        assert result.matches_r
-        assert result.total_encrypted == result.r_expected_total
+    def test_encrypted_total_is_exact(self, result):
+        # BFV is exact integer arithmetic, so the encrypted total must
+        # equal the pooled cleartext total with no tolerance. The
+        # cohort is simulated per run, so this is an internal-
+        # consistency claim: the protocol reproduces the right answer
+        # on whatever data it was given.
+        assert result.exact
+        assert result.total_encrypted == result.total_cleartext
 
-    def test_per_site_counts_match_R(self, result):
-        assert result.per_site_cleartext == result.r_expected_per_site
+    def test_total_is_the_sum_of_site_counts(self, result):
+        assert result.total_encrypted == sum(result.per_site_cleartext)
+
+    def test_runs_over_the_simulated_cohorts(self, result):
+        assert result.site_sizes == [60, 15, 25]
 
     def test_no_party_can_decrypt_alone(self, result):
         # The distinction from the aggregation example: shares live at
@@ -78,13 +84,14 @@ class TestQueryCount:
         assert not hasattr(result.master, "secret_share")
         assert all(s.secret_share is not None for s in result.master.sites)
 
-    def test_computation_matches_the_single_decrypter_version(self, result):
-        from homomorphepy.examples import aggregation
+    def test_holds_across_draws(self, result):
+        # The claim is about the protocol, not one dataset: a different
+        # draw must still recover its own cleartext total exactly.
+        from homomorphepy.examples import query_count
 
-        # Different cohorts, so not the same total; what must hold is
-        # that both recover their own cleartext total exactly.
-        assert aggregation.run().exact
-        assert result.total_encrypted == result.total_cleartext
+        other = query_count.run(seed=7)
+        assert other.exact
+        assert other.total_encrypted != 0
 
 
 class TestMLE:

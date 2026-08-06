@@ -22,8 +22,8 @@ website:
           - consensus-admm.qmd
           - cox-lasso.qmd
           - dp.qmd
-      - href: parity.qmd
-        text: Parity with R
+      - href: precision.qmd
+        text: Precision
 
 format:
   html:

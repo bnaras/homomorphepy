@@ -85,16 +85,15 @@ There the key is generated n-of-n, split across the sites, so the
 coordinator cannot decrypt anything alone. Same computation, and the
 guarantee stops depending on what the coordinator chooses to look at.
 
-## What BFV brings over the Paillier original
+## What BFV brings over an additive-only scheme
 
-The legacy Paillier vignettes in `homomorpheR` achieve the same kind of
-count aggregation using Paillier encryption, which supports only
-additive homomorphism. With BFV:
+Paillier, the classic choice for this kind of aggregation, supports
+only additive homomorphism. With BFV:
 
 - **Multiplication** is available — encrypted products, variances,
   more complex integer-valued aggregates.
 - **Performance** — OpenFHE's optimized C++ backend is orders of
-  magnitude faster than pure-R Paillier on big integers.
+  magnitude faster than a big-integer Paillier implementation.
 - **SIMD packing** — BFV encrypts integer vectors; multiple per-site
   counts can ride in the slots of a single ciphertext for parallel
   aggregation.

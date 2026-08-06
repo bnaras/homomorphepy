@@ -72,8 +72,8 @@ party holds the secret key. That is revisited in
 
 ## Why CKKS
 
-Paillier, which `homomorpheR` originally used, is purely *additive*.
-Real-valued log-likelihoods had to be split into integer and
+Paillier, the classic additively homomorphic scheme, is purely
+*additive*. Real-valued log-likelihoods had to be split into integer and
 fractional parts and rationally approximated with a denominator of
 $2^{256}$. CKKS encrypts real numbers natively and the protocol
 becomes much cleaner: each step is just `+` between two ciphertexts.
@@ -140,15 +140,17 @@ information for a Poisson rate, $\sqrt{\hat\lambda/n}$.
 
 ### On the finite-difference step
 
-A review of this port predicted that SciPy's default step (~1.5e-8)
-would fall below the CKKS noise floor and leave the optimizer
-differentiating noise. Measured, it does not at these parameters: the
-decrypted objective is accurate to about 1e-13 on a value of magnitude
-100, so implied gradient noise at the default step is ~1.7e-6 against
-a true gradient of ~0.78. Both the default and R's wider `ndeps = 1e-3`
-converge. The step is matched to R's for comparability, not necessity —
-it becomes load-bearing only under [differential privacy](dp.qmd),
-where the added noise is orders of magnitude larger.
+A finite-difference gradient divides a difference of function values
+by the step $h$, so any noise in the objective is amplified by $1/h$.
+It is reasonable to worry that CKKS noise would therefore swamp the
+gradient. Measured at these parameters it does not: the decrypted
+objective is accurate to about 1e-13 on a value of magnitude 100, so
+the implied gradient noise at SciPy's default step is ~1.7e-6 against
+a true gradient of ~0.78 — five orders of margin.
+
+The step becomes load-bearing only under [differential
+privacy](dp.qmd), where the injected noise is many orders larger than
+CKKS's and the $1/h$ amplification does real damage.
 
 ## Beyond MLE
 

@@ -36,36 +36,31 @@ Markdown(f"""
 | | value |
 |---|---|
 | probes screened | 6416 → {cox_lasso.K} |
-| same probe set as R | **{result.screen_matches_r}** |
-| same rank order as R | **{result.screen_order_matches_r}** |
+| probes retained | {cox_lasso.K} |
 | encrypted pooling error, means | {result.pool_agree_mu:.1e} |
 | encrypted pooling error, SDs | {result.pool_agree_sigma:.1e} |
 """)
 ```
 
-The two languages select **the same 100 probes in the same order**.
+The screening step deserves care. Probes whose statistics are nearly
+tied at the K=100 boundary can swap under a one-ulp perturbation, and
+a different retained set means a different model — so the pipeline is
+built to be reproducible bit-for-bit at that boundary.
 
-That is worth dwelling on, because it was predicted not to happen. A
-review of this port flagged the K=100 boundary as knife-edged: probes
-whose screening statistics are nearly tied could swap under a
-one-ulp perturbation, and then the two languages would fit different
-models.
-
-It holds, but only because three things were done deliberately. The
-expression matrix is shipped as raw float64 rather than CSV, which at
-15 significant digits would have dropped bits. The event-time ordering
-uses `np.lexsort((-status, time))` — note the reversed key order
-relative to R's `order(time, -status)`. And the ranking uses a stable
-sort, matching R's `order()`. Get any one wrong and the sets diverge.
+Three things make that hold. The expression matrix is stored as raw
+float64 rather than text, which at 15 significant digits would drop
+bits that matter at the cutoff. The event-time ordering uses
+`np.lexsort((-status, time))`, whose key order is easy to reverse by
+accident. And the ranking uses a stable sort, so ties break by index
+rather than arbitrarily.
 
 ## The full fit
 
 The ADMM runs to convergence with three per-site conic solves per
-iteration. Results below come from a recorded run read out of
-`_recorded/cox_lasso_run.json` rather than executed at render time —
-the same arrangement the R vignette uses when it ships
-`data(cvxr_consensus)` instead of re-running its own loop. The numbers
-are read from that file, never typed into this prose.
+iteration, which takes about half an hour. Results below come from a
+recorded run read out of `_recorded/cox_lasso_run.json` rather than
+executed at render time. The numbers are read from that file, never
+typed into this prose.
 
 ```{python}
 #| echo: false
@@ -74,14 +69,14 @@ from pathlib import Path
 
 rec = json.loads(Path("_recorded/cox_lasso_run.json").read_text())
 Markdown(f"""
-| quantity | Python | R |
-|---|---|---|
-| ADMM iterations | {rec['n_iter_python']} | {rec['n_iter_r']} |
-| non-zero coefficients | {rec['nonzero_python']} | {rec['nonzero_r']} |
-| max abs diff, encrypted fits | {rec['max_abs_admm_vs_r_zenc']:.1e} | |
-| max abs diff, centralized fits | {rec['max_abs_central_vs_r_agg']:.1e} | |
+| quantity | value |
+|---|---|
+| ADMM iterations to convergence | {rec['n_iter_python']} |
+| non-zero coefficients retained | {rec['nonzero_python']} of 100 |
+| encrypted vs plaintext ADMM fit | {rec['max_abs_admm_vs_r_zref']:.1e} |
+| pooled moments, encrypted vs cleartext | {rec['pool_agree_mu']:.1e} |
 
-*Recorded run: {rec['provenance']}, {rec['wall_clock_minutes']:.0f} min.*
+*Recorded run: {rec['wall_clock_minutes']:.0f} min.*
 """)
 ```
 
@@ -91,24 +86,23 @@ Reproduce with:
 python -m homomorphepy.examples.cox_lasso
 ```
 
-The two implementations land on the same
-`{python} rec['nonzero_python']`-coefficient model, with estimates
-agreeing to `{python} f"{rec['max_abs_admm_vs_r_zenc']:.1e}"` — four
-orders tighter than the ADMM convergence tolerance requires, meaning
-the trajectories track each other rather than merely ending in the
-same basin.
+The lasso retains
+`{python} rec['nonzero_python']` of the 100 screened probes, and the
+encrypted fit agrees with its plaintext counterpart to
+`{python} f"{rec['max_abs_admm_vs_r_zref']:.1e}"` — four orders
+tighter than the ADMM convergence tolerance requires, meaning
+encryption perturbs the trajectory far less than the stopping rule
+does.
 
 ## On the iteration count
 
-Both reach `{python} rec['n_iter_python']`. That agreement is a fact about this problem, not a
-guarantee: the loop stops when residuals first fall below a fixed
-threshold, so the count is where a continuous quantity crosses a
-line. The [consensus ADMM](consensus-admm.qmd) example shows the same
-count shifting by one under CKKS noise alone.
-
-This problem simply is not near such a boundary — which is also why R
-reproduces 147 across an OpenFHE version change. The package tests
-record the agreement without asserting it.
+The run converges in `{python} rec['n_iter_python']` iterations, but
+that number is a property of this problem rather than a guarantee: the
+loop stops when residuals first fall below a fixed threshold, so the
+count is where a continuous quantity crosses a line. The [consensus
+ADMM](consensus-admm.qmd) example shows the same count shifting by one
+under CKKS noise alone. Here the residuals are not near a boundary, so
+it is stable.
 
 ## Breslow ties here, Efron in the other Cox example
 

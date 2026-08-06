@@ -13,10 +13,9 @@ import homomorphepy
 
 ![](logo.png){.float-end width="180" fig-alt="homomorphepy hex logo"}
 
-`homomorphepy` is the Python twin of the R package
-[homomorpheR](https://github.com/bnaras/homomorpheR). Both sit on the
-same [OpenFHE](https://openfhe.org) C++ library and run the same
-worked examples, so a result can be checked in either language.
+`homomorphepy` computes statistics across several parties without any
+of them revealing their data, using homomorphic encryption via
+[OpenFHE](https://openfhe.org).
 
 Version `{python} homomorphepy.__version__`, wrapping OpenFHE 1.5.1.
 
@@ -53,9 +52,9 @@ Ordered by how much machinery they need.
 | [Cox-lasso](cox-lasso.qmd) | The full pipeline on gene expression: encrypted standardization, screening, and fitting. |
 | [Differential privacy](dp.qmd) | What it costs to add DP on top — a demonstration, not a recommendation. |
 
-[Parity with R](parity.qmd) documents where the two languages agree
-exactly, where they agree statistically, and where they cannot agree
-at all.
+[Precision](precision.qmd) explains what "the encrypted answer matches"
+means for each scheme, and when to expect exactness rather than a
+tolerance.
 
 ## Installing
 
