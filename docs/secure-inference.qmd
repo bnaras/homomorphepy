@@ -1,6 +1,5 @@
 ---
-title: "Secure inference"
-subtitle: "Scoring patients a lab cannot see"
+title: "Secure model inference"
 ---
 
 ```{python}
@@ -10,12 +9,37 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-A hospital holds patient biomarkers. A lab holds a proprietary risk
-model. Neither will show the other what it has.
+## The use case
 
-The hospital encrypts its biomarkers and sends the ciphertexts. The
-lab evaluates its model homomorphically and returns an encrypted
-score vector. The hospital decrypts.
+A diagnostic lab develops a proprietary scoring model for disease risk
+based on a panel of biomarkers. A hospital wants to score its patients
+but cannot send raw patient data to the lab in cleartext. The lab does
+not want to send its model coefficients to the hospital in cleartext
+either.
+
+With FHE the hospital encrypts patient biomarkers, sends the
+ciphertexts to the lab, the lab applies its weighted-sum scoring
+directly on ciphertexts, and the hospital decrypts the scores. The
+biomarker values never appear in cleartext on the lab's machine, and
+the lab's coefficients are never sent to the hospital. These are the
+*transport* guarantees and they are what the pipeline below
+illustrates. They are not the whole story of deploying a
+model-as-a-service — see the threat model below.
+
+This is the two-party companion to the multi-site master/worker
+pattern ([MLE](mle.qmd), [Cox](cox.qmd)). Unlike those, there is no
+aggregator and no consensus: one client (hospital) holds the secret
+key and queries one server (lab) which holds the model coefficients in
+cleartext.
+
+## Scenario: weighted biomarker score
+
+The lab's model computes a weighted score:
+
+$$\text{score} = w_1 x_1 + w_2 x_2 + w_3 x_3 + w_4 x_4 + b$$
+
+where $x_i$ are biomarker values and $w_i, b$ are proprietary
+coefficients.
 
 ```{python}
 from homomorphepy.examples import secure_inference
@@ -48,7 +72,7 @@ Markdown("| patient | encrypted score | cleartext score | risk |\n"
 Maximum deviation from the cleartext computation:
 `{python} f"{result.max_error:.1e}"`.
 
-## What the protocol delivers
+## Transport guarantees
 
 Two things, both necessary for a model-as-a-service deployment where
 the lab is not trusted with patient data:
@@ -56,7 +80,7 @@ the lab is not trusted with patient data:
 * biomarker values never appear in cleartext outside the hospital;
 * the lab's coefficients never reach the hospital in cleartext.
 
-## What it does not deliver
+## Threat model: model extraction from the hospital side
 
 Neither is sufficient, and it would be dishonest to stop here. The
 hospital can query the lab repeatedly with inputs of its choosing and

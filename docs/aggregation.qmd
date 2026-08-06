@@ -1,6 +1,5 @@
 ---
-title: "Aggregation"
-subtitle: "Counting across sites without revealing the counts"
+title: "Privacy-preserving count aggregation under BFV"
 ---
 
 ```{python}
@@ -10,13 +9,22 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-Three hospitals each hold a patient cohort. A researcher wants to know
-how many patients across all three match a clinical criterion. No
-hospital will disclose its own count.
+## The problem
 
-Each site counts locally, encrypts that single integer under the
-coordinator's public key, and sends the ciphertext. The coordinator
-adds the ciphertexts homomorphically and decrypts only the total.
+Multiple research sites each hold patient data and want to know the
+*total count* of patients matching a criterion (say `age < 50` and
+`sex == "F"` and `biomarker < 0.2`) without revealing the individual
+per-site counts to anyone, including the coordinator running the
+aggregation.
+
+We use OpenFHE's **BFV** scheme. BFV operates on *integer vectors*
+with both addition and multiplication — well-suited to counting and
+other exact integer-valued aggregates.
+
+This is the BFV companion to the CKKS-based real-valued master/worker
+examples ([maximum likelihood](mle.qmd), [Cox regression](cox.qmd)).
+For exact integer aggregation BFV is the right choice; for real-valued
+sufficient statistics CKKS is the right choice.
 
 ## The protocol
 
@@ -34,41 +42,62 @@ Markdown(f"""
 | | value |
 |---|---|
 | site cohort sizes | {result.site_sizes} |
-| per-site counts *(never seen by the coordinator)* | {result.per_site_cleartext} |
+| per-site counts *(never revealed to the coordinator)* | {result.per_site_cleartext} |
 | **encrypted total** | **{result.total_encrypted}** |
 | cleartext total | {result.total_cleartext} |
 """)
 ```
 
-The recovered total is `{python} result.total_encrypted`, matching the
-cleartext sum `{python} result.total_cleartext` **exactly**.
-
-## Why exactly, and not approximately
-
-The scheme here is BFV, which does exact integer arithmetic. A count
-is an integer, so the answer is the integer — not a value close to it.
-CKKS, used elsewhere in these examples for real-valued work, trades
-exactness for the ability to encrypt real numbers, and there
-comparisons carry a tolerance. Here `==` is the right test and the
-code asserts it.
+The aggregated count matches the cleartext computation exactly — BFV
+is *exact* over its integer plaintext space.
 
 ```{python}
 assert result.exact
-assert result.total_encrypted == sum(result.per_site_cleartext)
 ```
 
-## What the coordinator learns
+## What just happened
 
-Only the total. The per-site counts
-(`{python} str(result.per_site_cleartext)`) exist inside each site and
-in this document, which stands in for all three parties at once — but
-never in the coordinator's view of the protocol.
+1. The coordinator created an encryption context and distributed the
+   **public key** to all sites.
+2. Each site computed its local count in the clear, encrypted it, and
+   sent the ciphertext to the coordinator.
+3. The coordinator added the encrypted counts using `+` — BFV's
+   homomorphic addition makes this equivalent to adding the
+   plaintexts.
+4. Only the coordinator, holding the **secret key**, could decrypt the
+   total.
 
-There is a limit to that guarantee, and it is worth stating plainly:
-the coordinator holds the secret key. If a site's ciphertext were sent
-on its own, the coordinator *could* decrypt it. The protocol relies on
-the coordinator only ever seeing the sum.
+No site revealed its individual count. The coordinator never saw any
+patient-level data. The total is exact.
 
-[Query counting](query-count.qmd) removes that reliance. There the key
-is split across sites, so the coordinator cannot decrypt anything
-alone — the same computation, a stronger guarantee.
+In a real deployment the coordinator distributes the public key and
+the serialized context to each site; the secret key stays with the
+coordinator. Here one process stands in for all parties.
+
+## The limit of this trust model
+
+The coordinator holds the secret key. If a site's ciphertext were ever
+sent on its own, the coordinator *could* decrypt it — the protocol
+relies on the coordinator only ever seeing the sum.
+
+[Distributed query counting](query-count.qmd) removes that reliance.
+There the key is generated n-of-n, split across the sites, so the
+coordinator cannot decrypt anything alone. Same computation, and the
+guarantee stops depending on what the coordinator chooses to look at.
+
+## What BFV brings over the Paillier original
+
+The legacy Paillier vignettes in `homomorpheR` achieve the same kind of
+count aggregation using Paillier encryption, which supports only
+additive homomorphism. With BFV:
+
+- **Multiplication** is available — encrypted products, variances,
+  more complex integer-valued aggregates.
+- **Performance** — OpenFHE's optimized C++ backend is orders of
+  magnitude faster than pure-R Paillier on big integers.
+- **SIMD packing** — BFV encrypts integer vectors; multiple per-site
+  counts can ride in the slots of a single ciphertext for parallel
+  aggregation.
+- **Threshold FHE** — the secret key can be split across parties so no
+  single party can decrypt unilaterally, which is what
+  [query counting](query-count.qmd) uses.

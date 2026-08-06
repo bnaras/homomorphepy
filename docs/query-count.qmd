@@ -1,6 +1,5 @@
 ---
-title: "Query counting"
-subtitle: "The same count, with no party able to decrypt"
+title: "Distributed query count under threshold BFV"
 ---
 
 ```{python}
@@ -10,18 +9,24 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-[Aggregation](aggregation.qmd) left one weakness: the coordinator held
-the secret key, so the protocol depended on it only ever seeing the
-sum. Here the key is generated *n-of-n* — each site holds a share, and
-recovering any plaintext requires a partial decryption from every
-site. No party, coordinator included, can decrypt alone.
+## The problem
 
-## Setting up the shared key
+Several sites each hold a private table of patient records. A
+coordinator wants the answer to a single aggregate query — *how many
+patients across all sites satisfy some condition?* — without any site
+revealing its own records, and without the coordinator learning any
+individual site's count. Only the grand total should ever become
+visible, and it should be **exact**: a count is an integer, and an
+answer of "about 4" is not a count.
 
-The sites chain their key generation. The first produces a keypair;
-each subsequent site derives the joint public key from its
-predecessor's while keeping its own share. The final public key
-encrypts for the group.
+Three sites, each with `sex`, `age`, and a biomarker `bm`. The query is
+`age < 50 and sex == "F" and bm < 0.2`.
+
+## The target answer
+
+If the data could be pooled in one place, the query is a single
+expression. We compute it here only to have a reference to check the
+distributed protocol against.
 
 ```{python}
 from homomorphepy.examples import query_count
@@ -29,46 +34,109 @@ from homomorphepy.examples import query_count
 result = query_count.run()
 ```
 
-The query is `{python} result.query`, evaluated by each site on its
-own rows.
+The pooled answer is `{python} result.total_cleartext`. No site
+actually pools its data; this number is the ground truth the encrypted
+protocol must reproduce.
+
+## Why the classic solution needed two non-cooperating parties
+
+The additive structure of the problem — the grand total is the sum of
+the per-site counts — is exactly what an *additively homomorphic*
+encryption scheme computes. Let $c_i$ be site $i$'s local count and
+$E(\cdot)$ the encryption function. Given $E(c_1), E(c_2), E(c_3)$, the
+scheme lets anyone compute $E(c_1) + E(c_2) + E(c_3) = E(c_1 + c_2 +
+c_3)$ without decrypting the parts.
+
+The historical difficulty was not the arithmetic but the *trust
+model*. The Paillier cryptosystem, which `homomorpheR` originally used
+for exactly this kind of aggregation, has a **single private key**.
+Whoever holds it can decrypt anything — including a lone $E(c_i)$. So
+if the coordinator holds the key, it can read each site's count
+individually, defeating the purpose.
+
+The workaround was two **non-cooperating parties** who do not collude,
+with each site splitting its count behind a fresh random mask. It
+works, but it buys the guarantee with an assumption about the parties'
+behaviour rather than with cryptography.
+
+## Threshold encryption removes the need for masking
+
+Threshold (multiparty) encryption changes the trust model at the root.
+There is no single private key. Key generation is chained across the
+sites: each site holds only a secret *share* $sk_i$, and the joint
+public key $pk_{1..n}$ is built by passing the running public key from
+one site to the next. Everything is encrypted under $pk_{1..n}$, but
+**decryption requires every site to contribute a partial decryption** —
+no one, coordinator included, can decrypt anything alone.
+
+Under this model a lone $E(c_i)$ is simply not decryptable by any
+single party, so the random masks and the two non-cooperating parties
+are no longer needed. The coordinator sums the encrypted per-site
+counts and asks the sites to jointly decrypt only the total.
+Individual counts are protected not because they are hidden behind
+random noise, but because the ability to decrypt them does not exist
+in any one place.
+
+We use the **BFV** scheme rather than CKKS here. BFV is exact integer
+arithmetic: the decrypted total is the integer sum, bit for bit, with
+no approximation. CKKS, used elsewhere in this package for real-valued
+likelihoods, would return the count as a floating-point value close to
+the integer and require rounding. For a count, exactness is the whole
+point, so BFV is the right instrument.
+
+## The encrypted answer is exact
 
 ```{python}
 #| echo: false
 from IPython.display import Markdown
+
 m = result.master
 Markdown(f"""
 | | value |
 |---|---|
-| sites | {len(m.sites)} |
-| per-site counts *(no party sees these)* | {result.per_site_cleartext} |
-| **recovered total** | **{result.total_encrypted}** |
+| sites holding a key share | {len(m.sites)} |
+| per-site counts *(never decrypted by anyone)* | {result.per_site_cleartext} |
+| **encrypted total** | **{result.total_encrypted}** |
+| pooled cleartext total | {result.total_cleartext} |
 | computed independently by R | {result.r_expected_total} |
-| shares held by the coordinator | {0 if not hasattr(m, 'secret_share') else 'some'} |
 """)
 ```
 
-## Agreement with R
+The threshold-BFV protocol returns
+`{python} result.total_encrypted`, identical to the pooled answer of
+`{python} result.total_cleartext`. Because BFV is exact integer
+arithmetic, the two agree with no tolerance to argue about — the
+equality is bit-for-bit, not approximate.
 
-This is the tightest cross-language check in the package. Both
-implementations evaluate the same query on the same rows, and because
-BFV is exact, the answers are integers that must match — not values
-within a tolerance.
+The same holds across languages. R's implementation of this protocol
+recovers `{python} result.r_expected_total` on the same rows, so the
+comparison is an equality of integers rather than an agreement within
+some bound.
 
 ```{python}
+assert result.total_encrypted == result.total_cleartext
 assert result.total_encrypted == result.r_expected_total
-assert result.per_site_cleartext == result.r_expected_per_site
 ```
 
-R recovers `{python} result.r_expected_total`; Python recovers
-`{python} result.total_encrypted`.
+## Discussion
 
-## What replaced the old construction
-
-The Paillier-era version of this protocol needed two extra
-*non-cooperating parties* and an additive masking dance to reach a
-comparable guarantee, because Paillier has a single decryption key.
-Threshold FHE obtains it directly: the key is split, and the masking
-machinery disappears.
-
-That machinery is now frozen in homomorpheR and absent from
-homomorphepy entirely.
+- **The trust improvement is structural.** No single party holds a
+  decryption key, so no single party — coordinator or site — can
+  decrypt an individual site's count. This is a stronger guarantee
+  than the Paillier scheme's, and it is achieved without the two
+  non-cooperating parties, the non-collusion assumption, or the random
+  masking the single-key scheme required.
+- **Only the aggregate is ever revealed.** The sites jointly decrypt
+  the total and nothing else. Individual counts are never decrypted by
+  anyone, because doing so would require all the secret shares to be
+  brought together for that specific encrypted value — which the
+  protocol never does.
+- **BFV gives exact counts.** For integer-valued aggregates — counts,
+  sums, contingency-table cells — BFV decrypts to the exact integer.
+  The exactness that the original Paillier demonstration offered is
+  retained; the trust model is what improved.
+- **Honest-but-curious parties.** As with the other distributed
+  protocols here, sites are assumed to follow the protocol. A
+  malicious site could submit a wrong count or a corrupted partial
+  decryption; detecting that requires verifiable decryption, which is
+  beyond this demonstration.

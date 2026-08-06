@@ -1,6 +1,5 @@
 ---
-title: "Cox regression"
-subtitle: "Survival analysis across three hospitals"
+title: "Distributed Cox regression"
 ---
 
 ```{python}
@@ -10,15 +9,59 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-The DLBCL cohort of Rosenwald et al. (2002), split by molecular
-subgroup. GCB, ABC and Type III lymphomas arise from different cells
-of origin and tend to be diagnosed at different referral centers, so
-using the subgroup as the site boundary is operationally realistic
-rather than a convenience — and it produces genuinely imbalanced
-sites.
+## The statistical problem
 
-Each site computes its own Cox partial log-likelihood at the current
-coefficient vector. Patient rows never leave.
+The Cox proportional hazards model is one of the workhorses of medical
+statistics. Given covariates $x_i$ for subject $i$, an event time
+$t_i$, and an event indicator $\delta_i$, the hazard is modeled as
+
+$$
+h(t \mid x_i) \;=\; h_0(t) \, \exp(\beta^\top x_i)
+$$
+
+where $h_0(t)$ is an unspecified baseline hazard and $\beta$ is the
+vector of regression coefficients we want to estimate. The **partial
+log-likelihood** depends only on $\beta$:
+
+$$
+\ell(\beta) \;=\; \sum_{i: \delta_i = 1}
+  \left[\, \beta^\top x_i \;-\; \log\!\!\sum_{j \in R_i} \exp(\beta^\top x_j) \,\right]
+$$
+
+where $R_i$ is the risk set at time $t_i$.
+
+For **stratified** Cox regression — when baseline hazards differ
+across strata (e.g. across study sites) but the coefficients $\beta$
+are shared — the partial log-likelihood becomes a sum over strata:
+
+$$
+\ell(\beta) \;=\; \sum_{s=1}^{S} \ell_s(\beta).
+$$
+
+This additive decomposition is exactly what we need for a
+privacy-preserving distributed protocol. The same decomposition
+underlies the master/worker architecture used by `distcomp`,
+`DataSHIELD`, and `WebDISCO`: a central master broadcasts the current
+$\beta$, each site computes its local $\ell_s(\beta)$ on its private
+data, and the master combines the local contributions. We adopt the
+same topology, with the encrypted-aggregation step performed under
+CKKS so that the master sees only the *sum* of local contributions
+and not the individual addends.
+
+## DLBCL lymphoma cohort
+
+We use the diffuse large-B-cell lymphoma cohort of Rosenwald et al.
+(2002), the same dataset Bayle et al. (2025) use to motivate
+distributed Cox estimation, excluding the five patients with zero
+follow-up time.
+
+The model is a function of five expression signatures, stratified by
+molecular subgroup — GCB, ABC and Type III — and *the subgroup itself
+is the site boundary*. This is biologically and operationally
+realistic: the three subgroups arise from different cells of origin,
+have systematically different prognosis, and tend to be diagnosed at
+different referral centers. The sites are imbalanced in size, as real
+ones are.
 
 ```{python}
 from homomorphepy.examples import cox
@@ -39,25 +82,50 @@ rows = "\n".join(
 )
 Markdown(
     f"Sites: {sizes}\n\n"
-    "| coefficient | distributed, encrypted | centralized cleartext | difference |\n"
+    "| coefficient | distributed, encrypted | aggregated cleartext | difference |\n"
     "|---|---|---|---|\n" + rows
 )
 ```
 
-The distributed encrypted fit and the centralized fit agree to
-`{python} f"{fit.max_abs_difference:.1e}"`, over
-`{python} fit.n_objective_calls` objective evaluations — each one a
-full encrypt, homomorphic sum, and n-of-n threshold decryption across
-the three sites.
+## Threshold keys: the trust model
 
-Log-likelihood: `{python} f"{fit.loglik_encrypted:.6f}"` encrypted
-against `{python} f"{fit.loglik_centralized:.6f}"` centralized.
+A single-decrypter master is *operationally* convenient — one party
+owns decryption — but it leaves a meaningful piece of the threat model
+unaddressed: the master is trusted not to decrypt anything it
+shouldn't.
+
+Threshold key generation removes that trust. Three sites jointly
+generate a key so that no single party holds the joint secret. The
+master's role is reduced to an aggregator: it sums encrypted
+contributions and orchestrates partial-decryption fan-in, but it
+cannot decrypt anything by itself.
+
+The mathematical content is identical — same data, same fit, same
+coefficients to floating-point precision. Only the trust model
+changes.
+
+### What the aggregator sees, by stage
+
+1. Encrypted local contributions
+   $\mathit{ct}_i = E_{\mathit{pk}_{1..n}}(\ell_i)$. None decryptable
+   alone.
+2. The encrypted sum
+   $\mathit{ct}_{\text{sum}} = \boxplus_i \mathit{ct}_i$. Not
+   decryptable alone.
+3. Partial decryptions $\rho_i$ contributed by each site. Not
+   decryptable individually.
+4. After fusion, the *plaintext sum* $\ell(\beta) = \sum_i \ell_i$.
+   This appears at the aggregator only at this point.
+
+The sites are honest-but-curious among themselves and toward the
+aggregator; the aggregator holds no secret-key material and is *fully
+untrusted*.
 
 ## Only the master class changes
 
-The single-decrypter and threshold versions differ in one line. The
-optimizer, the objective, the site functions and the protocol runner
-are identical; swapping the backend swaps who can decrypt.
+The optimizer, the objective, the site functions and the protocol
+runner are identical between the two backends. Swapping the backend
+swaps who can decrypt.
 
 ```{python}
 ckks_fit = cox.run(backend="ckks")
@@ -73,6 +141,14 @@ Markdown(f"""
 """)
 ```
 
+The distributed encrypted fit agrees with the aggregated cleartext fit
+to `{python} f"{fit.max_abs_difference:.1e}"`, over
+`{python} fit.n_objective_calls` objective evaluations — each one a
+full encrypt, homomorphic sum, and n-of-n threshold decryption across
+the three sites. Log-likelihood
+`{python} f"{fit.loglik_encrypted:.6f}"` encrypted against
+`{python} f"{fit.loglik_centralized:.6f}"` centralized.
+
 ## Two tie conventions, on purpose
 
 `survival::coxph` defaults to Efron's method for tied event times;
@@ -86,3 +162,11 @@ This example passes `ties="efron"` to match R. The
 partial likelihood is written symbolically for a convex solver and
 that form *is* Breslow's; Efron has no comparable formulation. The R
 vignettes make exactly the same split.
+
+## Caveat
+
+A teaching example. Production would want a real communication
+transport, persistent serialization at site boundaries, and — for the
+threshold protocol — a story about what happens when a site is
+unavailable at decryption time, since n-of-n means every site must
+participate.

@@ -1,6 +1,5 @@
 ---
-title: "Consensus ADMM"
-subtitle: "Convex optimization where only the consensus step is encrypted"
+title: "Federated consensus ADMM"
 ---
 
 ```{python}
@@ -9,6 +8,36 @@ import os
 
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
+
+## Introduction
+
+The [Cox](cox.qmd) example shows that *function-call* optimizers
+compose with FHE: hand them a callback that performs an encrypted
+master/worker round, and the optimizer cannot tell.
+
+That pattern fits any objective with a sum-decomposable
+log-likelihood, but it does not generalize to arbitrary convex
+programs. A convex-optimization toolkit like `cvxpy` operates on a
+*symbolic* problem, not a callback. We cannot hand it a function that
+secretly does FHE on every call, because it does not call our
+function: it canonicalizes the problem once and ships the canonical
+form to a numerical solver.
+
+The replacement is **federated consensus ADMM**. We split the global
+problem into per-site local subproblems each handled by `cvxpy` in
+cleartext, and use the threshold-FHE channel only to compute the
+cross-site **consensus update**. The local solves stay fast because
+their Parameter values change while the problem structure does not, so
+canonicalization happens once. The encrypted channel earns its keep on
+the consensus aggregation.
+
+| | [Cox threshold](cox.qmd) | this example |
+|---|---|---|
+| Optimizer | BFGS via function calls | Consensus ADMM (one outer loop) |
+| Local solver | partial-likelihood evaluation | `cvxpy` conic solve |
+| FHE call site | every objective evaluation | every ADMM iteration |
+
+## The protocol
 
 Three sites fit a shared logistic model by ADMM. Each solves a local
 convex subproblem; the only quantity that ever leaves a site is the

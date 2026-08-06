@@ -1,6 +1,5 @@
 ---
-title: "Maximum likelihood"
-subtitle: "An unmodified optimizer, an encrypted objective"
+title: "Maximum likelihood estimation under CKKS"
 ---
 
 ```{python}
@@ -10,14 +9,88 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-Three sites count adverse events. None will share its counts, but all
-want the joint maximum-likelihood estimate of the underlying rate.
+## The statistical problem
 
-The point of this example is what *doesn't* happen. SciPy's optimizer
-is not modified, not wrapped in anything clever, and not told that
-encryption is involved. It is handed an objective function; each time
-it calls that function, three per-site log-likelihoods are encrypted,
-summed homomorphically, and the total decrypted.
+Suppose we have count data $y_1, y_2, \ldots, y_n$ that we model as
+independent draws from a Poisson distribution with unknown parameter
+$\lambda$. The maximum likelihood estimate is
+$\hat{\lambda} = \bar{y}$, obtained by minimizing the negative
+log-likelihood
+
+$$
+-\ell(\lambda \mid y) \;=\; -\sum_{i=1}^{n} \log p(y_i \mid \lambda).
+$$
+
+## The privacy constraint
+
+Now suppose the same data is **distributed across three sites** — say,
+three hospitals counting adverse events. None will share its raw
+counts with the others or with a central coordinator, but they are
+willing to *jointly* compute the same MLE provided no party learns
+anything about another party's contribution.
+
+The negative log-likelihood factorises additively:
+
+$$
+-\ell(\lambda \mid y) \;=\; -\ell_1(\lambda \mid y_1) - \ell_2(\lambda \mid y_2) - \ell_3(\lambda \mid y_3)
+$$
+
+so each site can compute its local term in the clear and only the
+*sum* of the three local likelihoods needs to travel between parties —
+and the sum must not reveal the individual addends.
+
+## The protocol
+
+We use the **master/worker** topology that distcomp- and
+DataSHIELD-style federated analyses actually deploy: a star with the
+master at the center and one independent worker per site. There is no
+chain and no inter-site communication.
+
+In words:
+
+0. The master generates a CKKS context and key pair, distributes the
+   public key to the three workers, keeps the secret key.
+1. The master broadcasts the current $\lambda$ to each worker.
+2. Each worker computes its local negative log-likelihood
+   $\ell_i(\lambda)$ on its private data, encrypts the result under
+   the master's public key, and returns $E(\ell_i)$ to the master.
+3. The master sums the encrypted contributions homomorphically:
+   $E(\ell) = E(\ell_1) \boxplus E(\ell_2) \boxplus E(\ell_3)
+   = E(\ell_1 + \ell_2 + \ell_3)$.
+4. The master decrypts $E(\ell)$ to recover $\ell$.
+5. The master hands $\ell$ to the optimizer; the protocol repeats for
+   each new guess of $\lambda$ until convergence.
+
+This is the realistic shape: each worker independently does its local
+computation and ships an encrypted summary; the master only sees the
+encrypted summaries (and, after homomorphic summation, the decrypted
+total). With a single-decrypter master, the master *could* decrypt
+individual $E(\ell_i)$ in principle; the cryptographic story
+strengthens when paired with threshold key generation, where no single
+party holds the secret key. That is revisited in
+[Cox regression](cox.qmd).
+
+## Why CKKS
+
+Paillier, which `homomorpheR` originally used, is purely *additive*.
+Real-valued log-likelihoods had to be split into integer and
+fractional parts and rationally approximated with a denominator of
+$2^{256}$. CKKS encrypts real numbers natively and the protocol
+becomes much cleaner: each step is just `+` between two ciphertexts.
+CKKS also supports multiplication, which the Cox example needs.
+
+## Implementation
+
+The actor surface — `Site` (worker), `Master`, the master/worker
+runner — is the same code as in any other distributed-statistics
+example here; only the master's *backend* changes.
+`make_ckks_master()` takes a context and key pair and routes
+encryption and decryption through CKKS. The worker class and the
+`aggregate()` runner are backend-agnostic.
+
+The per-site negative log-likelihood is the same plain numeric
+function it would be in the cleartext case — the site never touches a
+ciphertext.
 
 ```{python}
 from homomorphepy.examples import mle
@@ -28,6 +101,7 @@ fit = mle.run()
 ```{python}
 #| echo: false
 from IPython.display import Markdown
+
 lo, hi = fit.ci()
 Markdown(f"""
 | | value |
@@ -42,49 +116,53 @@ Markdown(f"""
 """)
 ```
 
-The encrypted estimate is `{python} f"{fit.lambda_encrypted:.6f}"`
-against a pooled cleartext value of
-`{python} f"{fit.lambda_pooled:.6f}"` — a difference of
-`{python} f"{fit.abs_difference:.1e}"`.
+The CKKS-based estimate matches the cleartext estimate to within
+floating-point precision — here
+`{python} f"{fit.abs_difference:.1e}"`. No site ever revealed its
+individual counts to any other party.
 
-Each of those `{python} fit.n_objective_calls` evaluations was a full
-encrypt / homomorphic-sum / decrypt round.
+Each of those `{python} fit.n_objective_calls` objective evaluations
+was a full encrypt / homomorphic-sum / decrypt round. **The optimizer
+itself is unmodified** — it is handed a function and never told that
+encryption is involved.
 
-## The comparison is exact, not another fit
+For a Poisson rate the maximum likelihood estimate is the sample mean
+in closed form, so the reference above is exact rather than a second
+numerical fit; the only thing under test is the path through
+encryption.
 
-For a Poisson rate the maximum-likelihood estimate is the sample mean
-in closed form. The reference here is therefore the arithmetic mean of
-the pooled counts, not a second numerical optimization — so the only
-thing under test is the path through encryption.
-
-## Where the standard error comes from
+### On the standard error
 
 Not from the optimizer's internal curvature estimate. BFGS accumulates
 an approximation to the inverse Hessian as a *search* device, and it
-is well known to be an unreliable variance estimate. The SE reported
-above is the analytic Fisher information for a Poisson rate,
-$\sqrt{\hat\lambda/n}$.
+is a poor variance estimate. The value above is the analytic Fisher
+information for a Poisson rate, $\sqrt{\hat\lambda/n}$.
 
-```{python}
-import math
+### On the finite-difference step
 
-analytic = math.sqrt(fit.lambda_encrypted / fit.n_total)
-assert math.isclose(fit.std_error, analytic, rel_tol=1e-12)
-```
+A review of this port predicted that SciPy's default step (~1.5e-8)
+would fall below the CKKS noise floor and leave the optimizer
+differentiating noise. Measured, it does not at these parameters: the
+decrypted objective is accurate to about 1e-13 on a value of magnitude
+100, so implied gradient noise at the default step is ~1.7e-6 against
+a true gradient of ~0.78. Both the default and R's wider `ndeps = 1e-3`
+converge. The step is matched to R's for comparability, not necessity —
+it becomes load-bearing only under [differential privacy](dp.qmd),
+where the added noise is orders of magnitude larger.
 
-## A caveat that is easy to state wrongly
+## Beyond MLE
 
-A review of this port predicted that SciPy's default finite-difference
-step (~1.5e-8) would fall below the CKKS noise floor and leave the
-optimizer differentiating noise.
+For Poisson MLE the protocol uses only additions, so even the purely
+additive Paillier scheme suffices. CKKS is a clean improvement but not
+strictly necessary here. The story changes for likelihoods that need
+products or higher-order statistics — [distributed Cox
+regression](cox.qmd), for example — where CKKS's multiplicative
+homomorphism becomes a prerequisite.
 
-Measured, that does not happen at these parameters. The decrypted
-objective is accurate to about 1e-13 on a value of magnitude 100, so
-the implied gradient noise at the default step is ~1.7e-6 against a
-true gradient of ~0.78 — five orders of margin. Both the default and
-the widened step converge.
+## Caveat
 
-The step is nonetheless matched to R's `ndeps = 1e-3`, for
-comparability rather than necessity. It becomes genuinely
-load-bearing only when [differential privacy](dp.qmd) adds noise many
-orders larger than CKKS's.
+This is a teaching example. In production you would want a real
+communication transport, threshold key generation so no single party
+holds the full secret, and persistent serialization at site
+boundaries. The point is not the deployment story but the *structure*
+of a privacy-preserving distributed computation.
