@@ -641,6 +641,9 @@ stats = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "clarabel" },
+    { name = "cvxpy", version = "1.7.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "cvxpy", version = "1.9.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "lifelines" },
     { name = "pyright" },
     { name = "pytest" },
@@ -662,6 +665,8 @@ provides-extras = ["openfhe", "stats"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "clarabel", specifier = ">=0.11.1" },
+    { name = "cvxpy", specifier = ">=1.7.5" },
     { name = "lifelines", specifier = ">=0.30.0" },
     { name = "pyright", specifier = ">=1.1.380" },
     { name = "pytest", specifier = ">=8.0" },
