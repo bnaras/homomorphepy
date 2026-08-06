@@ -4,11 +4,14 @@ subtitle: "Multi-site privacy-preserving statistics over homomorphic encryption"
 ---
 
 ```{python}
-#| echo: false
+#| include: false
 import os
+
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 import homomorphepy
 ```
+
+![](logo.png){.float-end width="180" fig-alt="homomorphepy hex logo"}
 
 `homomorphepy` is the Python twin of the R package
 [homomorpheR](https://github.com/bnaras/homomorpheR). Both sit on the

@@ -4,8 +4,9 @@ subtitle: "The same count, with no party able to decrypt"
 ---
 
 ```{python}
-#| echo: false
+#| include: false
 import os
+
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 

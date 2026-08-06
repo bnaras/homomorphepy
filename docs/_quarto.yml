@@ -5,7 +5,10 @@ project:
 website:
   title: "homomorphepy"
   description: "Multi-site privacy-preserving statistics over homomorphic encryption"
+  favicon: logo_240.png
   navbar:
+    logo: logo_240.png
+    logo-alt: "homomorphepy hex logo"
     left:
       - href: index.qmd
         text: Home

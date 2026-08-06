@@ -4,8 +4,9 @@ subtitle: "Where the two languages agree, and where they cannot"
 ---
 
 ```{python}
-#| echo: false
+#| include: false
 import os
+
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 

@@ -4,8 +4,9 @@ subtitle: "Counting across sites without revealing the counts"
 ---
 
 ```{python}
-#| echo: false
+#| include: false
 import os
+
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 

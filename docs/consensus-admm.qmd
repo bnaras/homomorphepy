@@ -4,8 +4,9 @@ subtitle: "Convex optimization where only the consensus step is encrypted"
 ---
 
 ```{python}
-#| echo: false
+#| include: false
 import os
+
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
