@@ -69,8 +69,10 @@ include = ["src/homomorphepy/**", "tests/**", "README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not slow'"
 markers = [
     "openfhe: requires the openfhe extension module (see docs/install.md)",
+    "slow: minutes rather than seconds; run with `pytest -m slow`",
 ]
 
 [tool.ruff]

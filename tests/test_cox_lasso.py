@@ -76,8 +76,18 @@ class TestEncryptedScreening:
         assert screened.top_idx.max() <= 6416
 
 
+@pytest.mark.slow
 class TestFullPipeline:
-    """The ADMM loop. Slow: one run shared across the assertions."""
+    """The ADMM loop. ~27 minutes, so opt-in: `pytest -m slow`.
+
+    Measured 2026-08-06 against R's shipped results:
+
+        iterations                        python 147, R 147
+        max |python_admm - R z_enc|       1.556e-07
+        max |python_admm - R z_ref|       1.437e-07
+        max |python_central - R agg_beta| 1.991e-07
+        non-zero coefficients             python 38, R 38
+    """
 
     @pytest.fixture(scope="class")
     @staticmethod
@@ -92,30 +102,37 @@ class TestFullPipeline:
         assert full.n_iter is not None and full.n_iter < MAX_ITER
 
     def test_iteration_count_is_comparable_to_R(self, full):
-        # NOT an equality. The stopping rule is an absolute residual
-        # threshold, so the count is where a continuous quantity first
-        # crosses it -- demonstrated in test_consensus_admm to move
-        # under CKKS noise alone. R reports 147; a different conic
-        # solver build moves the trajectory far more than encryption
-        # does. Generous bound, present to catch gross divergence.
-        assert abs(full.n_iter - full.r_n_iter) < 50
+        # Deliberately NOT an equality, even though it MATCHED exactly
+        # (147 = 147) when measured. The stopping rule is an absolute
+        # residual threshold, so the count is where a continuous
+        # quantity first crosses it, and test_consensus_admm shows that
+        # flipping under CKKS noise alone at n=23. This problem simply
+        # is not near a boundary -- consistent with R reproducing 147
+        # across an openfhe.R version change. Asserting equality would
+        # convert a happy fact into a brittle requirement.
+        assert abs(full.n_iter - full.r_n_iter) < 20
 
     def test_coefficients_match_Rs_encrypted_fit(self, full):
         # Both are ADMM iterates stopped at the same residual
-        # tolerance (5e-3), not exact optima, so they agree to
-        # convergence-tolerance scale rather than solver precision.
-        assert np.max(np.abs(full.beta_admm - full.r_z_enc)) < 1e-2
+        # tolerance (5e-3) rather than exact optima, so agreement was
+        # expected only at convergence scale. Measured 1.6e-07 -- four
+        # orders tighter, because the trajectories track each other
+        # rather than merely landing in the same basin.
+        assert np.max(np.abs(full.beta_admm - full.r_z_enc)) < 1e-5
 
     def test_centralized_fit_matches_Rs(self, full):
-        # No ADMM involved: two conic solvers on the same convex
-        # problem. Tighter than the ADMM comparison.
-        assert np.max(np.abs(full.beta_centralized - full.r_agg_beta)) < 1e-3
+        # No ADMM involved: two independent Clarabel builds on the
+        # same convex problem, reached through two modelling layers.
+        # Measured 2.0e-07.
+        assert np.max(np.abs(full.beta_centralized - full.r_agg_beta)) < 1e-5
 
     def test_selects_a_sparse_model(self, full):
         # The lasso is doing something: K=100 screened probes in,
         # substantially fewer retained.
         nz = int(np.sum(np.abs(full.beta_admm) > 1e-8))
         assert 0 < nz < 100
+        # Same count as R (38), so the penalty selects identically.
+        assert nz == int(np.sum(np.abs(full.r_z_enc) > 1e-8))
 
     def test_active_set_agrees_with_R(self, full):
         # Which probes survive the penalty matters more than their
