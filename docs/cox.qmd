@@ -64,6 +64,131 @@ different referral centers. The sites are imbalanced in size, as real
 ones are.
 
 ```{python}
+from homomorphepy import load_dlbcl, site_order
+
+df = load_dlbcl()
+COVARIATES = ["GCB_sig", "LN_sig", "Prolif_sig", "BMP6", "MHC2_sig"]
+
+df.groupby("Subgroup", observed=True).agg(n=("time", "size"),
+                                          events=("status", "sum"))
+```
+
+Each subgroup becomes a site holding only its own rows:
+
+```{python}
+import numpy as np
+
+def site_frame(name):
+    m = (df["Subgroup"] == name).to_numpy()
+    return {
+        "time":   df["time"].to_numpy(dtype=float)[m],
+        "status": df["status"].to_numpy(dtype=int)[m],
+        "X":      np.column_stack([df[c].to_numpy(dtype=float)[m]
+                                   for c in COVARIATES]),
+    }
+
+sites = {name: site_frame(name) for name in site_order()}
+list(sites)
+```
+
+## The site-level computation
+
+Each site evaluates its own Cox partial log-likelihood at the
+coefficient vector the aggregator broadcasts. This is ordinary
+statistical code — the site never touches a ciphertext.
+
+`ties="efron"` is not optional here. `PHReg` defaults to Breslow's
+method, and on this cohort the two conventions differ by up to 3.56 in
+pooled log-likelihood: a silent wrong answer rather than an error.
+
+```{python}
+from statsmodels.duration.hazard_regression import PHReg
+
+def local_cox_nll(data, beta):
+    b = np.asarray(beta, dtype=float).ravel()
+    model = PHReg(data["time"], data["X"],
+                  status=data["status"], ties="efron")
+    return float(-model.loglike(b))
+```
+
+## Threshold key generation
+
+The three sites jointly generate a key. Each keeps a share; the
+aggregator gets only the joint public key and can decrypt nothing on
+its own.
+
+```{python}
+from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+
+cc = fhe_context("CKKS", multiplicative_depth=1, scaling_mod_size=59,
+                 first_mod_size=60, batch_size=8)
+
+workers = [ThresholdSite(name, data, local_cox_nll)
+           for name, data in sites.items()]
+
+aggregator = make_threshold_master("Aggregator", cc, workers)
+aggregator
+```
+
+The scaling parameters are lifted from the defaults because the summed
+stratified log-likelihood on this cohort has magnitude ~5e2, and CKKS
+precision is relative to the value being encrypted.
+
+## Running the fit
+
+Every objective evaluation is a full round trip: broadcast $\beta$,
+each site encrypts its local contribution, the aggregator sums the
+ciphertexts, and the three share holders jointly decrypt the total.
+
+```{python}
+from scipy.optimize import minimize
+
+n_calls = 0
+
+def encrypted_nll(beta):
+    global n_calls
+    n_calls += 1
+    value = aggregator.aggregate(np.asarray(beta, dtype=float))
+    return 1e12 if (value is None or np.isnan(value)) else float(value)
+
+opt = minimize(encrypted_nll, x0=np.zeros(len(COVARIATES)),
+               method="L-BFGS-B", options={"ftol": 1e-9})
+
+beta_hat = np.asarray(opt.x)
+n_calls, opt.success
+```
+
+## The centralized reference
+
+One stratified fit on the pooled cohort — what the distributed
+protocol is meant to reproduce.
+
+```{python}
+centralized = PHReg(
+    df["time"].to_numpy(dtype=float),
+    np.column_stack([df[c].to_numpy(dtype=float) for c in COVARIATES]),
+    status=df["status"].to_numpy(dtype=int),
+    strata=df["Subgroup"].cat.codes.to_numpy(),
+    ties="efron",
+).fit()
+
+import pandas as pd
+
+pd.DataFrame({
+    "coefficient": COVARIATES,
+    "distributed, encrypted": beta_hat,
+    "aggregated cleartext": np.asarray(centralized.params),
+    "difference": np.abs(beta_hat - np.asarray(centralized.params)),
+})
+```
+
+```{python}
+assert np.max(np.abs(beta_hat - np.asarray(centralized.params))) < 1e-4
+```
+
+## The same run, in one call
+
+```{python}
 from homomorphepy.examples import cox
 
 fit = cox.run(backend="threshold")

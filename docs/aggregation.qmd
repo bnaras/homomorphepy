@@ -26,33 +26,99 @@ examples ([maximum likelihood](mle.qmd), [Cox regression](cox.qmd)).
 For exact integer aggregation BFV is the right choice; for real-valued
 sufficient statistics CKKS is the right choice.
 
-## The protocol
+This page calls the encryption primitives directly rather than going
+through the actor layer used elsewhere, because the primitives are
+what it is teaching.
+
+## Three sites with private cohorts
 
 ```{python}
-from homomorphepy.examples import aggregation
+import numpy as np
+import pandas as pd
 
-result = aggregation.run()
+rng = np.random.default_rng(42)
+site_data = [
+    pd.DataFrame({
+        "age":       rng.integers(40, 71, size=n),
+        "sex":       rng.choice(["M", "F"], size=n),
+        "biomarker": rng.uniform(0.0, 1.0, size=n),
+    })
+    for n in (1000, 500, 1500)
+]
+
+site_data[0].head()
+```
+
+## The coordinator sets up encryption
+
+```{python}
+from homomorphepy import fhe_context, packed_codec
+
+# BFV: exact integer arithmetic mod plaintext_modulus.
+cc = fhe_context("BFV", plaintext_modulus=65537, multiplicative_depth=1)
+
+keys = cc.KeyGen()
+pk, sk = keys.publicKey, keys.secretKey
+
+codec = packed_codec(cc)
+```
+
+In a real deployment the coordinator distributes the public key (and
+the serialized context) to each site. The secret key stays with the
+coordinator. We simulate this in one process by sharing `cc` and `pk`
+locally.
+
+## Each site computes locally and encrypts
+
+```{python}
+from homomorphepy import Ct
+
+QUERY = 'age < 50 and sex == "F" and biomarker < 0.2'
+
+def site_encrypt(site_df, cc, pk):
+    count = len(site_df.query(QUERY))
+    pt = codec.encode(count)
+    return Ct(cc.Encrypt(pk, pt), cc.cc)
+
+ct_site1 = site_encrypt(site_data[0], cc, pk)
+ct_site2 = site_encrypt(site_data[1], cc, pk)
+ct_site3 = site_encrypt(site_data[2], cc, pk)
+
+ct_site1
+```
+
+These ciphertexts are opaque to the coordinator — it learns nothing
+about individual site counts.
+
+## The coordinator aggregates
+
+```{python}
+# Homomorphic addition: the coordinator never decrypts intermediates.
+ct_total = ct_site1 + ct_site2 + ct_site3
+
+# Only the coordinator holds the secret key.
+result = cc.Decrypt(ct_total.raw, sk)
+total_count = codec.decode(result, 1)[0]
+total_count
+```
+
+## Verification
+
+```{python}
+true_count = sum(len(df.query(QUERY)) for df in site_data)
+true_count
 ```
 
 ```{python}
-#| echo: false
-from IPython.display import Markdown
-
-Markdown(f"""
-| | value |
-|---|---|
-| site cohort sizes | {result.site_sizes} |
-| per-site counts *(never revealed to the coordinator)* | {result.per_site_cleartext} |
-| **encrypted total** | **{result.total_encrypted}** |
-| cleartext total | {result.total_cleartext} |
-""")
+assert total_count == true_count
 ```
 
 The aggregated count matches the cleartext computation exactly — BFV
-is *exact* over its integer plaintext space.
+is *exact* over its integer plaintext space. The per-site counts, which
+the coordinator never sees, were:
 
 ```{python}
-assert result.exact
+[len(df.query(QUERY)) for df in site_data]
 ```
 
 ## What just happened
@@ -70,9 +136,14 @@ assert result.exact
 No site revealed its individual count. The coordinator never saw any
 patient-level data. The total is exact.
 
-In a real deployment the coordinator distributes the public key and
-the serialized context to each site; the secret key stays with the
-coordinator. Here one process stands in for all parties.
+## The same run, in one call
+
+```{python}
+from homomorphepy.examples import aggregation
+
+result = aggregation.run()
+result.total_encrypted, result.total_cleartext, result.exact
+```
 
 ## The limit of this trust model
 

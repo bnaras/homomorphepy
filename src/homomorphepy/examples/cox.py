@@ -1,10 +1,10 @@
 """Distributed Cox regression through an encrypted channel.
 
-Ports homomorpheR's ``cox.Rmd`` and ``cox-threshold.Rmd``. Both live
-here because their whole point is that the optimizer-facing code is
-*identical*: only the master class changes, from a single-decrypter
-CKKS master to an n-of-n threshold one. :func:`run` takes ``backend``
-and the rest of the protocol is untouched.
+Both trust models live here because the whole point is that the
+optimizer-facing code is *identical*: only the master class changes,
+from a single-decrypter CKKS master to an n-of-n threshold one.
+:func:`run` takes ``backend`` and the rest of the protocol is
+untouched.
 
 The setting is the Rosenwald DLBCL cohort, with the molecular subgroup
 used as the site boundary -- GCB, ABC and Type III arise from different
@@ -14,15 +14,13 @@ three sites are imbalanced (115 / 71 / 49), which is also realistic.
 
 Each site computes its own Cox partial log-likelihood at the current
 coefficient vector and never shares patient rows. The site-level
-function is ``PHReg(ties='efron').loglike(beta)``, which reproduces
-R's ``coxph(init=beta, iter.max=0)$loglik[1]`` to ~1e-12 -- verified
-independently in ``tests/test_cox_loglik.py`` before this module was
-written.
+function is ``PHReg(ties='efron').loglike(beta)``, checked against an
+independent implementation of the stratified partial likelihood in
+``tests/test_cox_loglik.py`` before this module was written.
 
-``ties='efron'`` is not optional. statsmodels defaults to Breslow,
-``survival`` defaults to Efron, and on this cohort the difference
-reaches 3.56 in pooled log-likelihood: a silent wrong answer rather
-than an error.
+``ties='efron'`` is not optional: ``PHReg`` defaults to Breslow, and on
+this cohort the two conventions differ by up to 3.56 in pooled
+log-likelihood -- a silent wrong answer rather than an error.
 """
 
 from __future__ import annotations
@@ -49,74 +47,48 @@ __all__ = ["COVARIATES", "FTOL", "CoxResult", "local_cox_nll", "run"]
 
 COVARIATES = ["GCB_sig", "LN_sig", "Prolif_sig", "BMP6", "MHC2_sig"]
 
-# Matches the R vignettes: the summed stratified Cox nLL on this cohort
-# has magnitude ~5e2, so scaling_mod_size is lifted from 50 to 59 with
-# first_mod_size 60 for margin.
+# The summed stratified Cox nLL on this cohort has magnitude ~5e2, and
+# CKKS precision is relative to the encrypted value, so scaling_mod_size
+# is lifted from 50 to 59 with first_mod_size 60 for margin.
 CKKS_PARAMS = dict(
     multiplicative_depth=1, scaling_mod_size=59, first_mod_size=60, batch_size=8
 )
 
-# No finite-difference step is set. R's optim defaults to ndeps = 1e-3
-# and the vignettes rely on it, but sweeping 1e-3 / 1e-5 / scipy's
-# default here changed neither the iterate count nor the result by a
+# No finite-difference step is set. Sweeping 1e-3 / 1e-5 / scipy's
+# default changed neither the evaluation count nor the result by a
 # single digit -- L-BFGS-B's path is insensitive to it on this problem.
 # Carrying a constant that demonstrably does nothing would just be one
-# more thing to explain, so it is gone. (Separately measured: the
-# encrypted objective is accurate to ~1e-13, so the step could be
-# shrunk freely if it ever did matter -- the CKKS noise floor is not
-# the binding constraint here. See D6.)
+# more thing to explain. (Separately measured: the encrypted objective
+# is accurate to ~1e-13, so the step could be shrunk freely if it ever
+# did matter -- the CKKS noise floor is not the binding constraint
+# here. Under differential privacy it is; see :mod:`.dp`.)
 
 # The convergence criterion, and why it is L-BFGS-B rather than BFGS.
 #
-# The R vignettes pass control = list(reltol = 1e-7): a RELATIVE
-# FUNCTION-VALUE test -- stop when a step cannot improve the objective
-# by a relative amount. scipy's `BFGS` has no such option; it tests the
-# GRADIENT NORM (gtol), a different question entirely, so R's 1e-7
-# carries no meaning there.
+# `BFGS` tests the GRADIENT NORM (gtol): stop when the gradient is
+# small. That threshold is not scale-free -- what counts as a small
+# gradient depends on the objective's magnitude, so a value tuned on
+# this cohort (nLL ~ 5e2) would silently need re-deriving for another
+# dataset, and one chosen too small sits BELOW the attainable floor set
+# by finite-difference truncation error and reports success=False
+# forever. Measured here: gtol = 1e-6 failed that way on the CLEARTEXT
+# objective too, so the failure was never about encryption.
 #
-# `L-BFGS-B`'s ftol is
-#     (f_k - f_{k+1}) / max(|f_k|, |f_{k+1}|, 1) <= ftol
-# which is R's reltol in form as well as spirit, so the vignettes'
-# 1e-7 transfers directly and "converged" means the same thing in both
-# languages without any calibration.
+# `L-BFGS-B`'s ftol is a RELATIVE FUNCTION-VALUE test,
+#     (f_k - f_{k+1}) / max(|f_k|, |f_{k+1}|, 1) <= ftol,
+# which carries no dependence on the objective's scale. That is the
+# reason for the choice: it transfers to another cohort unchanged.
 #
-# The alternative was to keep `BFGS` and back-calculate an equivalent
-# gtol from R's observed behaviour. That was measured
-# (temp/cox_gtol_calibrate.R) and it works: R's optim converges in 36
-# evaluations stopping at |grad|_inf = 1.54e-04, the central-difference
-# truncation error at ndeps = 1e-3 puts an attainable floor near
-# 7.6e-06, and gtol = 1e-4 sits between them -- reaching objective
-# 495.229021767 against R's 495.229021767. It was rejected anyway: that
-# constant is calibrated to THIS cohort at THIS objective scale (~495),
-# so it would silently need re-deriving for any other dataset.
-# homomorphepy is meant to be the shared infrastructure both languages
-# compute on, not a pixel-match of one example, and a relative
-# criterion is scale-free where a gradient threshold is not.
+# Swept against the centralized fit on this cohort:
 #
-# Worth recording from that investigation: an earlier gtol of 1e-6 lay
-# BELOW the attainable floor and so reported success=False -- on the
-# CLEARTEXT objective too. The failure was never about encryption.
+#     ftol            max|b - b_centralized|   in SE units   evals
+#     1e-7                    1.32e-04            1.1e-03      54
+#     2.2e-9 (scipy default)  1.29e-05            1.1e-04      60
+#     1e-9                    1.77e-07            1.7e-06      66
+#     1e-12                   1.90e-07            1.3e-06      72
 #
-# Matching the criterion's FORM does not make two implementations stop
-# in the same PLACE -- vmmin and L-BFGS-B take different steps -- so
-# R's 1e-7 is not the right value here even though it is the right
-# kind of tolerance. Swept against the centralized fit:
-#
-#     ftol       max|b - b_centralized|   in SE units   evals
-#     1e-7  (R)          1.32e-04            1.1e-03      54
-#     2.2e-9 (scipy)     1.29e-05            1.1e-04      60
-#     1e-9               1.77e-07            1.7e-06      66
-#     1e-12              1.90e-07            1.3e-06      72
-#     (R's own optim)    1.82e-06            2.1e-05      36
-#
-# 1e-9 reaches the accuracy floor -- 1e-12 buys nothing, so the limit
-# is the finite-difference gradient rather than the tolerance -- and
-# lands an order of magnitude tighter than R for six extra evaluations.
-#
-# This is a relative criterion driven to the numerical floor, not a
-# constant fitted to this cohort: it carries no dependence on the
-# objective's scale, which is exactly why it was preferred over
-# back-calculating a gradient threshold from R's stopping point.
+# 1e-9 reaches the accuracy floor: 1e-12 buys nothing, which says the
+# limit is the finite-difference gradient rather than the tolerance.
 FTOL = 1e-9
 
 PENALTY = 1e12
@@ -139,10 +111,9 @@ def _site_frames() -> dict[str, dict[str, np.ndarray]]:
 def local_cox_nll(data: dict[str, np.ndarray], beta: Any) -> float:
     """One site's negative Cox partial log-likelihood at ``beta``.
 
-    The direct analogue of the R vignettes' ``local_cox_nll``: plain
-    statistical code that never touches a ciphertext. Returns NaN when
-    the local computation fails, which the master propagates as a
-    non-evaluable parameter.
+    Plain statistical code that never touches a ciphertext. Returns
+    NaN when the local computation fails, which the master propagates
+    as a non-evaluable parameter.
     """
     b = np.asarray(beta, dtype=float).ravel()
     try:
@@ -169,7 +140,7 @@ class CoxResult:
     context: Context = field(repr=False)
 
     def table(self) -> list[dict[str, Any]]:
-        """Side-by-side comparison, as the R vignettes tabulate it."""
+        """Side-by-side comparison of the two fits, row per coefficient."""
         return [
             {
                 "coefficient": name,
@@ -187,10 +158,10 @@ def run(
 ) -> CoxResult:
     """Fit the stratified Cox model across sites through encryption.
 
-    ``backend='ckks'`` uses a single-decrypter master (``cox.Rmd``);
-    ``backend='threshold'`` uses n-of-n threshold keys where no party
-    can decrypt alone (``cox-threshold.Rmd``). Everything after the
-    master is constructed is identical between the two.
+    ``backend='ckks'`` uses a single-decrypter master; ``'threshold'``
+    uses n-of-n threshold keys where no party can decrypt alone.
+    Everything after the master is constructed is identical between
+    the two.
     """
     sites = _site_frames()
     names = list(sites)

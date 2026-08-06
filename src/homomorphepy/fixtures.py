@@ -1,17 +1,24 @@
-"""Loading of the cross-language parity fixtures.
+"""Loading of the shipped datasets.
 
-The fixtures are generated from R (homomorpheR's
-``data-raw/export_parity_fixtures.R``) because R's ``rpois``,
-``rbinom``, ``sample`` and ``rnorm`` algorithms have no numpy
-equivalent: no seeding makes Python reproduce R's stream. Eight of the
-twelve worked examples simulate their inputs that way, so re-simulating
-here would compute on *different data* and leave nothing meaningful to
-compare against the R results.
+The examples built on measured data -- the Rosenwald DLBCL cohort and
+its expression matrix -- read it from here, so every run computes on
+the same bytes. Simulated examples do not use this module at all; they
+draw their own data.
+
+The expression matrix ships as raw float64 rather than text. At 15
+significant digits a CSV round-trip drops bits that matter: the
+screening step in :mod:`~homomorphepy.examples.cox_lasso` ranks 6416
+probes and keeps 100, and probes nearly tied at that boundary can swap
+under a one-ulp perturbation.
 
 Everything in this module asserts rather than infers. The manifest
 declares each column's dtype and each factor's category order, and the
 loaders apply those declarations; nothing is left to pandas' type
 inference or to alphabetical sorting.
+
+Also here: :func:`load_golden` and :func:`load_json`, which back the
+project's own parity checks in ``tests/``. They are not needed to use
+the package.
 """
 
 from __future__ import annotations
@@ -89,8 +96,8 @@ def _entry(name: str) -> dict[str, Any]:
 def _checked_bytes(name: str) -> bytes:
     """Read a fixture, failing loudly if its digest does not match.
 
-    A stale fixture is worse than a missing one: it makes a
-    Python-vs-R disagreement look like a binding defect.
+    A stale fixture is worse than a missing one: it turns a data
+    problem into what looks like a binding defect.
     """
     e = _entry(name)
     path = Path(manifest()["_dir"]) / name
@@ -117,7 +124,7 @@ def load_json(name: str) -> dict[str, Any]:
 def _apply_dtypes(raw: pd.DataFrame, dtypes: dict[str, Any]) -> pd.DataFrame:
     """Apply the manifest's declared dtypes to an all-string frame.
 
-    Categoricals get their R level order, which is protocol semantics
+    Categoricals get their declared level order, which is protocol semantics
     rather than presentation: sites are visited in level order and the
     first is the lead decryptor in the threshold decryption. Letting
     pandas sort them alphabetically would silently permute the protocol.

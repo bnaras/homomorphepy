@@ -1,6 +1,6 @@
 """Secure inference: a lab scores encrypted patients.
 
-Ported from homomorpheR's ``secure-inference.Rmd``. A hospital holds
+A hospital holds
 patient biomarkers; a lab holds a proprietary linear risk model. The
 hospital encrypts, the lab evaluates its model homomorphically on the
 ciphertexts, and the hospital decrypts the scores.
@@ -35,9 +35,25 @@ import numpy as np
 from homomorphepy.ciphertext import Ct
 from homomorphepy.codec import packed_codec
 from homomorphepy.context import Context, fhe_context
-from homomorphepy.fixtures import load_json
 
-__all__ = ["InferenceResult", "LAB_WEIGHTS", "LAB_BIAS", "run", "extract_model"]
+__all__ = [
+    "InferenceResult",
+    "BIOMARKERS",
+    "LAB_WEIGHTS",
+    "LAB_BIAS",
+    "run",
+    "extract_model",
+]
+
+# Eight patients, four biomarkers each. A fixed panel rather than a
+# random draw: the example is about the pipeline, and fixed values keep
+# the printed scores stable between runs.
+BIOMARKERS = (
+    (1.2, 0.8, 1.5, 0.3, 2.1, 0.9, 1.1, 1.8),
+    (0.5, 1.1, 0.3, 0.8, 0.2, 1.4, 0.7, 0.6),
+    (2.0, 1.5, 2.3, 1.0, 1.8, 2.1, 1.6, 2.5),
+    (0.1, 0.4, 0.2, 0.6, 0.3, 0.1, 0.5, 0.2),
+)
 
 # The lab's proprietary model. Never sent to the hospital.
 LAB_WEIGHTS = (0.35, -0.20, 0.50, 0.15)
@@ -63,9 +79,8 @@ class InferenceResult:
 
 
 def run() -> InferenceResult:
-    """Score the fixture cohort through the encrypted channel."""
-    fixture = load_json("secure_inference")
-    biomarkers = [fixture["biomarkers"][k] for k in ("b1", "b2", "b3", "b4")]
+    """Score the biomarker panel through the encrypted channel."""
+    biomarkers = [list(b) for b in BIOMARKERS]
     n = len(biomarkers[0])
 
     # -- hospital: context, keys, and encryption ---------------------

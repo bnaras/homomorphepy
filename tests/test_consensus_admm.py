@@ -1,7 +1,7 @@
 """Consensus ADMM: the claims, tested across draws rather than one.
 
 The example simulates its own cohort with numpy by default. Matching
-R's exact random draw is available (``load_r_cohort``) but reserved for
+R's exact random draw is loaded here (see ``_r_cohort``) but reserved for
 cross-language value comparison; the scientific claims should hold for
 any draw from the data-generating process, and that is what is checked
 here.
@@ -31,6 +31,27 @@ from homomorphepy import have_backend, set_thread_env
 set_thread_env(2)
 
 pytest.importorskip("cvxpy", reason="install the 'stats' extra")
+
+
+def _r_cohort():
+    """The exact cohort R drew, for the cross-language check below.
+
+    Lives in the test rather than the package: homomorphepy does not
+    need R to be a concept in its public API, but our own parity
+    checking does need R's draw.
+    """
+    from homomorphepy import load_json
+
+    f = load_json("admm_cohort")
+    p = f["p"]
+    return [
+        (
+            np.asarray(s["X"], dtype=float).reshape(s["n"], p),
+            np.asarray(s["y"], dtype=float),
+        )
+        for s in f["sites"]
+    ]
+
 
 pytestmark = [
     pytest.mark.openfhe,
@@ -164,7 +185,7 @@ class TestAgreesWithR:
     def r_run():
         from homomorphepy.examples import consensus_admm as admm
 
-        return admm.run(cohort=admm.load_r_cohort())
+        return admm.run(cohort=_r_cohort())
 
     def test_encrypted_matches_plaintext_on_Rs_data_too(self, r_run):
         assert r_run.max_abs_encrypted_vs_plaintext < CKKS_TOL

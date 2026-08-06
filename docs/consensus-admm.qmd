@@ -54,6 +54,155 @@ The aggregator therefore learns the trajectory $\{z^k\}$ and nothing
 else. A subpoena served on it yields the consensus path but no
 individual site's contribution.
 
+### Simulating three sites
+
+```{python}
+import numpy as np
+
+P, BETA_TRUE, N_PER, LAM = 4, np.array([0.5, -1.0, 0.3, 0.8]), (400, 250, 350), 1.0
+
+rng = np.random.default_rng(98765)
+cohort = []
+for n in N_PER:
+    X = rng.normal(size=(n, P))
+    prob = 1.0 / (1.0 + np.exp(-(X @ BETA_TRUE)))
+    cohort.append((X, rng.binomial(1, prob).astype(float)))
+
+[X.shape for X, _ in cohort]
+```
+
+### The local subproblem
+
+Each site minimizes its own logistic loss plus the augmented-Lagrangian
+term tying it to the consensus. `z` and `u` are cvxpy `Parameter`s so
+the problem canonicalizes once and every iteration reuses it — this is
+what keeps the local solves fast.
+
+```{python}
+import cvxpy as cp
+
+SOLVER = cp.CLARABEL          # named explicitly, never inferred
+
+class ConsensusSite:
+    def __init__(self, name, X, y, rho, lam, n_sites):
+        self.name, self.X, self.y = name, X, y
+        p = X.shape[1]
+
+        self.x_var = cp.Variable(p)
+        self.z_par = cp.Parameter(p, value=np.zeros(p))
+        self.u_par = cp.Parameter(p, value=np.zeros(p))
+
+        margins = -cp.multiply(2.0 * y - 1.0, X @ self.x_var)
+        local_loss = (cp.sum(cp.logistic(margins))
+                      + (lam / (2 * n_sites)) * cp.sum_squares(self.x_var))
+        augmented = (rho / 2) * cp.sum_squares(
+            self.x_var - self.z_par + self.u_par)
+        self.problem = cp.Problem(cp.Minimize(local_loss + augmented))
+
+        self.x_curr = np.zeros(p)
+        self.u_curr = np.zeros(p)
+
+    def local_update(self, z_curr):
+        self.z_par.value = np.asarray(z_curr, dtype=float)
+        self.u_par.value = self.u_curr
+        self.problem.solve(solver=SOLVER)
+        self.x_curr = np.asarray(self.x_var.value).ravel()
+        return self.x_curr
+
+    def dual_update(self, z_new):
+        self.u_curr = self.u_curr + (self.x_curr - z_new)
+```
+
+### The ADMM loop
+
+The loop takes the consensus step as a *function*, so the identical
+loop runs in the clear and through encryption:
+
+```{python}
+def admm_loop(sites, p, rho, consensus_fn, max_iter=40, tol=1e-3):
+    z = np.zeros(p)
+    for k in range(1, max_iter + 1):
+        for s in sites:
+            s.local_update(z)
+        z_new = consensus_fn(sites)
+        for s in sites:
+            s.dual_update(z_new)
+
+        primal = np.sqrt(np.mean([np.sum((s.x_curr - z_new) ** 2)
+                                  for s in sites]))
+        dual = np.sqrt(len(sites)) * rho * np.linalg.norm(z_new - z)
+        z = z_new
+        if primal < tol and dual < tol:
+            return z, k
+    return z, max_iter
+```
+
+### Choosing ρ in the clear
+
+```{python}
+import warnings
+warnings.simplefilter("ignore", UserWarning)   # CLARABEL is chatty here
+
+def build(rho):
+    return [ConsensusSite(f"Site {i+1}", X, y, rho, LAM, len(cohort))
+            for i, (X, y) in enumerate(cohort)]
+
+def plain_consensus(sites):
+    return sum(s.x_curr + s.u_curr for s in sites) / len(sites)
+
+sweep = {}
+for rho in (10.0, 50.0, 200.0):
+    _, k = admm_loop(build(rho), P, rho, plain_consensus)
+    sweep[rho] = None if k >= 40 else k
+
+rho = min((r for r, k in sweep.items() if k is not None),
+          key=lambda r: sweep[r])
+sweep, rho
+```
+
+### The encrypted consensus step
+
+Only this one function changes. The sites hold n-of-n key shares; the
+aggregator sums the encrypted vectors, scales by $1/N$ *under
+encryption*, and the sites jointly decrypt.
+
+```{python}
+from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+
+cc = fhe_context("CKKS", multiplicative_depth=2, scaling_mod_size=50,
+                 first_mod_size=60, batch_size=8)
+
+key_holders = [ThresholdSite(f"Site {i+1}", None, lambda d, t: 0.0)
+               for i in range(len(cohort))]
+aggregator = make_threshold_master("Aggregator", cc, key_holders)
+
+def encrypted_consensus(sites):
+    cts = [aggregator.encrypt(s.x_curr + s.u_curr) for s in sites]
+    ct_avg = sum(cts) * (1.0 / len(sites))
+    return np.asarray(aggregator.decrypt(ct_avg, length=P), dtype=float)
+```
+
+### Running both
+
+```{python}
+beta_plain, n_plain = admm_loop(build(rho), P, rho, plain_consensus)
+beta_enc,   n_enc   = admm_loop(build(rho), P, rho, encrypted_consensus)
+
+import pandas as pd
+pd.DataFrame({
+    "coefficient": [f"beta{i+1}" for i in range(P)],
+    "encrypted":   beta_enc,
+    "plaintext":   beta_plain,
+    "difference":  np.abs(beta_enc - beta_plain),
+})
+```
+
+```{python}
+assert np.max(np.abs(beta_enc - beta_plain)) < 1e-5
+```
+
+### The same run, in one call
+
 ```{python}
 from homomorphepy.examples import consensus_admm as admm
 

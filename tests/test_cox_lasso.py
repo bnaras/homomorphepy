@@ -56,20 +56,22 @@ class TestEncryptedScreening:
     """The stage the cryptography review flagged as knife-edged."""
 
     def test_selects_the_same_probes_as_R(self, screened):
+        golden = np.asarray(load_golden()["top_idx"], dtype=int)
         # 6416 probes ranked by a univariate Cox score pooled under
         # encryption, top 100 kept. Near-ties at the K=100 boundary
         # were predicted to flip under a one-ulp perturbation. They do
         # not -- but only because the expression matrix ships as raw
         # float64 rather than CSV, and because both sort traps are
         # handled: lexsort key order, and a stable argsort.
-        assert screened.screen_matches_r
+        assert set(screened.top_idx.tolist()) == set(golden.tolist())
         assert len(set(screened.top_idx.tolist())) == 100
 
     def test_rank_order_also_matches(self, screened):
         # Stronger than set equality: the probes come out in the same
         # order, so the |Z| statistics agree to better than the gaps
         # between adjacent ranks.
-        assert screened.screen_order_matches_r
+        golden = np.asarray(load_golden()["top_idx"], dtype=int)
+        assert np.array_equal(screened.top_idx, golden)
 
     def test_indices_are_one_based_like_R(self, screened):
         assert screened.top_idx.min() >= 1
@@ -102,6 +104,7 @@ class TestFullPipeline:
         assert full.n_iter is not None and full.n_iter < MAX_ITER
 
     def test_iteration_count_is_comparable_to_R(self, full):
+        r_n_iter = int(load_golden()["n_iter_enc"])
         # Deliberately NOT an equality, even though it MATCHED exactly
         # (147 = 147) when measured. The stopping rule is an absolute
         # residual threshold, so the count is where a continuous
@@ -110,7 +113,7 @@ class TestFullPipeline:
         # is not near a boundary -- consistent with R reproducing 147
         # across an openfhe.R version change. Asserting equality would
         # convert a happy fact into a brittle requirement.
-        assert abs(full.n_iter - full.r_n_iter) < 20
+        assert abs(full.n_iter - r_n_iter) < 20
 
     def test_coefficients_match_Rs_encrypted_fit(self, full):
         # Both are ADMM iterates stopped at the same residual
@@ -118,27 +121,31 @@ class TestFullPipeline:
         # expected only at convergence scale. Measured 1.6e-07 -- four
         # orders tighter, because the trajectories track each other
         # rather than merely landing in the same basin.
-        assert np.max(np.abs(full.beta_admm - full.r_z_enc)) < 1e-5
+        r_z_enc = np.asarray(load_golden()["z_enc"], dtype=float)
+        assert np.max(np.abs(full.beta_admm - r_z_enc)) < 1e-5
 
     def test_centralized_fit_matches_Rs(self, full):
         # No ADMM involved: two independent Clarabel builds on the
         # same convex problem, reached through two modelling layers.
         # Measured 2.0e-07.
-        assert np.max(np.abs(full.beta_centralized - full.r_agg_beta)) < 1e-5
+        r_agg = np.asarray(load_golden()["agg_beta"], dtype=float)
+        assert np.max(np.abs(full.beta_centralized - r_agg)) < 1e-5
 
     def test_selects_a_sparse_model(self, full):
         # The lasso is doing something: K=100 screened probes in,
         # substantially fewer retained.
-        nz = int(np.sum(np.abs(full.beta_admm) > 1e-8))
+        nz = full.n_nonzero
         assert 0 < nz < 100
         # Same count as R (38), so the penalty selects identically.
-        assert nz == int(np.sum(np.abs(full.r_z_enc) > 1e-8))
+        r_z_enc = np.asarray(load_golden()["z_enc"], dtype=float)
+        assert nz == int(np.sum(np.abs(r_z_enc) > 1e-8))
 
     def test_active_set_agrees_with_R(self, full):
         # Which probes survive the penalty matters more than their
         # exact values; a differing active set would be a real
         # divergence rather than a tolerance question.
+        r_z_enc = np.asarray(load_golden()["z_enc"], dtype=float)
         py = {i for i, v in enumerate(full.beta_admm) if abs(v) > 1e-6}
-        r = {i for i, v in enumerate(full.r_z_enc) if abs(v) > 1e-6}
+        r = {i for i, v in enumerate(r_z_enc) if abs(v) > 1e-6}
         jaccard = len(py & r) / max(len(py | r), 1)
         assert jaccard > 0.9, f"active sets diverge: {jaccard:.2f}"

@@ -2,7 +2,7 @@
 
 openfhe-python does not bind ``CryptoContext::GetSchemeId`` (upstream
 defect P14), so a bare context cannot be asked what scheme it was built
-for. homomorpheR relies on being able to ask: its ``.packed_codec()``
+for. The codec layer relies on being able to ask: ``packed_codec()``
 branches on the scheme to pick the encode/decode pair, which is what
 lets one threshold master drive CKKS real-valued work and BFV/BGV
 exact-integer work with the context as the single source of truth.
@@ -13,9 +13,8 @@ rather than the context becomes the source of truth — so examples must
 build contexts through :func:`fhe_context` rather than calling
 ``GenCryptoContext`` directly.
 
-Defaults mirror ``openfhe.R::fhe_context`` deliberately: same enabled
-features, same argument names in snake_case, so a ported example reads
-like its R counterpart and a divergence is visible as a textual diff.
+``PKE``, ``KEYSWITCH`` and ``LEVELEDSHE`` are enabled by default, since
+every protocol here needs them; anything else is passed explicitly.
 """
 
 from __future__ import annotations
@@ -76,7 +75,7 @@ class Context:
         """The parameters this context was constructed with.
 
         Recorded so examples can print the full tuple, which is how
-        drift between the R and Python sides shows up in a diff rather
+        drift in the parameters a context was built with shows up rather
         than as an unexplained numeric difference.
         """
         return dict(self._params)
@@ -97,8 +96,8 @@ class Context:
         )
 
 
-# Argument names mirror openfhe.R's *Params() setters (snake_case of
-# the C++ setter), so ported examples read like the R original.
+# Argument names are the snake_case of the C++ CCParams setters, so a
+# parameter can be looked up directly in the OpenFHE headers.
 _SETTERS = {
     "multiplicative_depth": "SetMultiplicativeDepth",
     "scaling_mod_size": "SetScalingModSize",
@@ -123,10 +122,10 @@ def fhe_context(
     features: list[Any] | None = None,
     **params: Any,
 ) -> Context:
-    """Create a :class:`Context`, mirroring ``openfhe.R::fhe_context``.
+    """Create a :class:`Context` for ``scheme``.
 
     ``PKE``, ``KEYSWITCH`` and ``LEVELEDSHE`` are enabled automatically,
-    exactly as the R constructor does; ``features`` adds to that triple
+    automatically; ``features`` adds to that triple
     rather than replacing it. Pass ``MULTIPARTY`` there for threshold
     protocols.
 

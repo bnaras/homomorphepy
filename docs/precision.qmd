@@ -30,18 +30,78 @@ and shrinks with the scaling factor. In practice, at the depths these
 examples use:
 
 ```{python}
+#| code-fold: true
+#| code-summary: "the measurement"
+import numpy as np
+from homomorphepy import fhe_context, packed_codec, Ct
+
+def ckks_error(depth, scaling_mod_size, values, weights=None):
+    """Encrypt, sum (optionally weighted), decrypt; report the error."""
+    cc = fhe_context("CKKS", multiplicative_depth=depth,
+                     scaling_mod_size=scaling_mod_size,
+                     first_mod_size=60, batch_size=8)
+    keys = cc.KeyGen()
+    cc.EvalMultKeyGen(keys.secretKey)
+    codec = packed_codec(cc)
+
+    cts = [Ct(cc.Encrypt(keys.publicKey, codec.encode(v)), cc.cc)
+           for v in values]
+    if weights is None:
+        ct = sum(cts)
+        expected = np.sum(values, axis=0)
+    else:
+        ct = sum(c * w for c, w in zip(cts, weights))
+        expected = sum(np.asarray(v) * w for v, w in zip(values, weights))
+
+    got = codec.decode(cc.Decrypt(ct.raw, keys.secretKey), len(expected))
+    absolute = float(np.max(np.abs(np.asarray(got) - expected)))
+    return absolute, absolute / float(np.max(np.abs(expected)))
+
+rng = np.random.default_rng(1)
+rows = []
+for magnitude in (1.0, 1e2, 1e4):
+    values = [rng.normal(magnitude, magnitude / 10, size=8) for _ in range(3)]
+    for depth, sms, weights, label in (
+        (1, 50, None, "sum"),
+        (1, 59, None, "sum, wider scale"),
+        (2, 50, [0.35, -0.20, 0.50], "weighted sum (one multiply)"),
+    ):
+        a, r = ckks_error(depth, sms, values, weights)
+        rows.append((label, magnitude, depth, sms, a, r))
+```
+
+```{python}
 #| echo: false
 from IPython.display import Markdown
 
-Markdown("""
-| computation | depth | observed error |
-|---|---|---|
-| pooled means and SDs across sites | 1 | ~5e-16 |
-| summed log-likelihood | 1 | ~1e-13 |
-| SIMD-packed linear score | 2 | ~2e-13 |
-| ADMM consensus average | 1 | 1e-8 – 2e-6 |
-""")
+Markdown(
+    "| computation | magnitude | depth | scaling_mod_size "
+    "| absolute error | relative |\n|---|---|---|---|---|---|\n"
+    + "\n".join(
+        f"| {n} | {m:g} | {d} | {sms} | {a:.1e} | {r:.1e} |"
+        for n, m, d, sms, a, r in rows
+    )
+)
 ```
+
+Three things to read off that table.
+
+**CKKS precision is proportional, not additive.** Absolute error grows
+with the magnitude of the encrypted value — roughly two orders across
+the four decades shown — while relative error stays near 1e-15. An
+absolute tolerance that is generous for standardized covariates is
+therefore not generous for a log-likelihood of magnitude 5e2, which is
+why [Cox regression](cox.qmd) and [Cox-lasso](cox-lasso.qmd) raise
+`scaling_mod_size` from 50 to 59.
+
+**A wider scaling factor buys the most at small magnitude.** At
+magnitude 1 it improves the sum by two orders; by magnitude 1e4 the
+two settings are indistinguishable, because something else has become
+binding. Raising it is not a general-purpose accuracy dial.
+
+**Each multiplication consumes a level and costs precision.** The
+depth-2 row is consistently worse than the depth-1 sum at the same
+magnitude, even though it produces an answer of similar size.
 
 These are *within-language* comparisons: the encrypted result against
 the same computation performed in the clear on the same data. That is

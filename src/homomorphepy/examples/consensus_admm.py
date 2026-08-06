@@ -1,6 +1,6 @@
 """Consensus ADMM over a threshold-encrypted channel.
 
-Ports homomorpheR's ``cvxr-consensus-admm.Rmd``. Three sites fit a
+Three sites fit a
 shared logistic model by ADMM: each solves a local convex subproblem,
 and the only step that leaves a site is the consensus average
 
@@ -48,7 +48,6 @@ import numpy as np
 
 from homomorphepy.actors import ThresholdMaster, ThresholdSite, make_threshold_master
 from homomorphepy.context import Context, fhe_context
-from homomorphepy.fixtures import load_json
 
 __all__ = [
     "DGP",
@@ -56,7 +55,6 @@ __all__ = [
     "SUPPORTED_SOLVERS",
     "ADMMResult",
     "ConsensusSite",
-    "load_r_cohort",
     "run",
     "simulate",
 ]
@@ -80,8 +78,8 @@ class ConsensusSite:
 
     Separate from :class:`~homomorphepy.actors.Site`, which is shaped
     for master/worker fan-in. ADMM is peer-to-peer and carries its own
-    per-site iterates, exactly as the R vignette defines a local
-    ``ConsensusSite`` rather than reusing the exported one.
+    per-site iterates, so it defines its own site class rather than
+    reusing the exported one.
 
     ``z`` and ``u`` are cvxpy Parameters so the problem canonicalizes
     once and every iteration reuses it; ``X``, ``y`` and ``rho`` are
@@ -162,7 +160,7 @@ class ADMMResult:
 
 
 # The data-generating process, not one draw of it. beta_true, the
-# site sizes and the penalty come from the R vignette; the draw does
+# site sizes and the penalty are fixed; the draw does
 # not have to.
 DGP = dict(
     p=4,
@@ -176,17 +174,12 @@ DGP = dict(
 
 
 def simulate(seed: int = 98765):
-    """Draw a cohort from the vignette's DGP with numpy's RNG.
+    """Draw a cohort of three sites from the DGP.
 
-    The default. R's rbinom (BTPE) and numpy's binomial are different
-    algorithms, so this is NOT R's draw even at the same seed -- and it
-    does not need to be. The claim the example makes is that the
-    encrypted fit reproduces the centralized fit on the data at hand,
+    A fresh draw per seed. The claim the example makes is that the
+    encrypted fit reproduces the centralized fit *on the data at hand*,
     which should hold for any draw; ``tests/test_consensus_admm.py``
     checks exactly that across several seeds.
-
-    Use :func:`load_r_cohort` when the point is bit-level comparison
-    against R rather than the statistical claim.
     """
     rng = np.random.default_rng(seed)
     beta = np.asarray(DGP["beta_true"], dtype=float)
@@ -196,23 +189,6 @@ def simulate(seed: int = 98765):
         prob = 1.0 / (1.0 + np.exp(-(X @ beta)))
         sites.append((X, rng.binomial(1, prob).astype(float)))
     return sites
-
-
-def load_r_cohort():
-    """The exact cohort R drew, for cross-language comparison.
-
-    Only needed when comparing values with R. Everything else should
-    use :func:`simulate`.
-    """
-    f = load_json("admm_cohort")
-    p = f["p"]
-    return [
-        (
-            np.asarray(s["X"], dtype=float).reshape(s["n"], p),
-            np.asarray(s["y"], dtype=float),
-        )
-        for s in f["sites"]
-    ]
 
 
 def _centralized(sites, lam: float) -> np.ndarray:
@@ -256,9 +232,8 @@ def _admm_loop(sites, p, rho, max_iter, tol, consensus_fn):
 def run(seed: int = 98765, cohort=None) -> ADMMResult:
     """Fit the consensus logistic model, plaintext and encrypted.
 
-    By default simulates a cohort from the DGP with numpy. Pass
-    ``cohort=load_r_cohort()`` to run on R's exact draw instead, which
-    is what the cross-language comparison test does.
+    Simulates a cohort from the DGP unless one is passed in as
+    ``cohort``, a sequence of ``(X, y)`` pairs -- one per site.
     """
     if cohort is None:
         cohort = simulate(seed)
@@ -274,7 +249,7 @@ def run(seed: int = 98765, cohort=None) -> ADMMResult:
     def plain_consensus(sites):
         return sum(s.x_curr + s.u_curr for s in sites) / len(sites)
 
-    # -- rho sweep, in the clear, exactly as the vignette does --------
+    # -- rho sweep, in the clear ---------------------------------------
     sweep: dict[float, int | None] = {}
     for rho in DGP["rho_grid"]:
         sites = build(rho)
@@ -334,7 +309,7 @@ def run(seed: int = 98765, cohort=None) -> ADMMResult:
 if __name__ == "__main__":  # pragma: no cover
     r = run()
     print(f"solver            : {r.solver} (explicit, not auto-selected)")
-    print("cohort            : simulated with numpy (not R's draw)")
+    print("cohort            : simulated fresh from the DGP")
     print(f"rho sweep         : {r.rho_sweep}  -> chose {r.rho:g}")
     print(
         f"iterations        : plaintext {r.n_iter_plaintext}, "

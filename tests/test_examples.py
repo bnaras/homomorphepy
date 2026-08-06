@@ -2,11 +2,10 @@
 
 Three rungs, chosen per example rather than applied uniformly:
 
-* **exact** — BFV integer results, compared with ``==``. Also the
-  cross-language rung: the query-count total must equal the integer R
-  computed on the same rows.
-* **CKKS tolerance** — encrypted vs plaintext *within this language*.
-  The real cryptographic claim.
+* **exact** — BFV integer results, compared with ``==``. No tolerance
+  is admissible: a count that is off by anything is wrong.
+* **CKKS tolerance** — encrypted vs plaintext. The real cryptographic
+  claim, and the only place approximation is expected.
 * **statistical** — a fitted estimate against a cleartext reference,
   where optimizer behavior dominates CKKS noise by orders of magnitude.
 
@@ -21,7 +20,7 @@ import math
 import numpy as np
 import pytest
 
-from homomorphepy import have_backend, load_json, set_thread_env
+from homomorphepy import have_backend, set_thread_env
 
 set_thread_env(2)
 
@@ -112,11 +111,12 @@ class TestMLE:
         assert result.abs_difference < STATISTICAL_TOL
 
     def test_uses_all_the_data(self, result):
-        fixture = load_json("mle_poisson")
+        from homomorphepy.examples import mle
+
+        pooled = np.concatenate(mle.simulate())
         assert result.n_total == 40
-        assert result.lambda_pooled == pytest.approx(
-            float(np.mean(fixture["y"])), abs=1e-12
-        )
+        assert result.site_sizes == [20, 7, 13]
+        assert result.lambda_pooled == pytest.approx(float(pooled.mean()), abs=1e-12)
 
     def test_the_optimizer_really_ran_through_the_channel(self, result):
         # Each objective call is a full encrypt/sum/decrypt round; a
@@ -152,8 +152,7 @@ class TestFiniteDifferenceStep:
         from homomorphepy.context import fhe_context
         from homomorphepy.examples import mle as mle_mod
 
-        fixture = load_json("mle_poisson")
-        sites = [s["y"] for s in fixture["sites"]]
+        sites = mle_mod.simulate()
         ctx = fhe_context(
             "CKKS", multiplicative_depth=1, scaling_mod_size=50, batch_size=8
         )
@@ -166,7 +165,10 @@ class TestFiniteDifferenceStep:
         clear = sum(mle_mod.local_nll(d, lam) for d in sites)
         errors = [abs(objective([lam]) - clear) for _ in range(8)]
 
-        assert clear == pytest.approx(99.8, abs=0.5)  # magnitude ~100
+        # Magnitude ~100. A loose bound on purpose: the cohort is drawn
+        # per run, so pinning the exact value would make this a test of
+        # the random draw rather than of the objective's precision.
+        assert 50.0 < clear < 200.0
         # Essentially float64 precision, not the ~1e-5 the prediction
         # would have required to disturb the difference quotient.
         assert max(errors) < 1e-10
@@ -178,8 +180,7 @@ class TestFiniteDifferenceStep:
         from homomorphepy.context import fhe_context
         from homomorphepy.examples import mle as mle_mod
 
-        fixture = load_json("mle_poisson")
-        sites = [s["y"] for s in fixture["sites"]]
+        sites = mle_mod.simulate()
         ctx = fhe_context(
             "CKKS", multiplicative_depth=1, scaling_mod_size=50, batch_size=8
         )
@@ -187,7 +188,7 @@ class TestFiniteDifferenceStep:
             [make_worker(f"S{i}", d, mle_mod.local_nll) for i, d in enumerate(sites)]
         )
         objective = mle_mod.make_objective(master)
-        pooled = float(np.mean(fixture["y"]))
+        pooled = float(np.concatenate(sites).mean())
 
         default_err = abs(
             float(minimize(objective, x0=[5.0], method="BFGS").x[0]) - pooled

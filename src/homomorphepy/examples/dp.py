@@ -1,8 +1,5 @@
 """Differential privacy layered on the encrypted protocols.
 
-Ports homomorpheR's ``cox-threshold-dp.Rmd`` and
-``cvxr-consensus-admm-dp.Rmd``.
-
 **This is a demonstration of what happens if you add DP, not a
 recommendation.** The lossless threshold-FHE protocols are the main
 story; they release the exact aggregate and leak nothing else. DP
@@ -21,9 +18,9 @@ point -- an aggregator that is compromised sees ciphertexts of
 Accounting is zCDP (Bun & Steinke 2016): a Gaussian release is
 ``rho = (Delta/sigma)^2 / 2``-zCDP, T queries compose to ``T*rho``,
 and ``epsilon = rho + 2*sqrt(rho*log(1/delta))``. Sensitivity
-``Delta = 1`` is a placeholder throughout, as in the R vignettes --
-deriving a real sensitivity bound for a Cox partial likelihood is a
-separate problem.
+``Delta = 1`` is a placeholder throughout: deriving a defensible
+sensitivity bound for a Cox partial likelihood is a separate problem
+and is not attempted here.
 
 Why gradient-based optimizers fail first
 ----------------------------------------
@@ -45,20 +42,20 @@ sigma   BFGS (finite-diff grad)    Nelder-Mead (gradient-free)
 1e-1    collapsed                  collapsed, 2/5 signs
 ======  =========================  ==============================
 
-The ordering is the vignette's point and it reproduces strongly:
-gradient-free search tolerates roughly three orders of magnitude more
-noise than gradient-based search, at the price of many more queries --
-which costs privacy budget in turn.
+The ordering is the point: gradient-free search tolerates roughly
+three orders of magnitude more noise than gradient-based search, at
+the price of many more queries -- which costs privacy budget in turn.
 
-**The absolute threshold differs from R, and the reason is worth
-knowing.** The R vignette's BFGS stays usable to sigma = 1e-2; scipy's
-collapses by 1e-5. R's ``optim`` (vmmin) accepts a step on a
-*function-value* decrease alone, whereas scipy's BFGS uses a Wolfe
-line search whose curvature condition evaluates the *gradient* at each
-trial point -- so the 1/h amplification hits the line search itself,
-not merely the search direction. scipy is therefore strictly more
-fragile here, which if anything strengthens the vignette's claim that
-any difference-based optimizer meets this failure mode.
+**Widening the finite-difference step does not rescue BFGS**, which is
+worth knowing because it is the obvious remedy. A larger ``h`` does
+produce a good gradient, and the optimizer still returns its starting
+point. The cause is the line search: scipy's BFGS uses a Wolfe search
+whose curvature condition evaluates the *gradient* at each trial
+point, so the 1/h amplification hits the line search itself rather
+than only the search direction. No step size fixes that -- the search
+cannot accept a step it cannot verify. An optimizer that accepts a
+step on a *function-value* decrease alone is less fragile here, and a
+gradient-free one has no such condition to satisfy at all.
 
 Both are properties of the mechanism meeting the optimizer, not
 defects in the protocol: the protocol releases exactly what it
@@ -67,10 +64,10 @@ promises.
 On randomness
 -------------
 
-The noise is drawn with numpy, not replayed from R. Two independent DP
-runs never agree on values *within* a language either, so a
-value-level cross-language comparison would be meaningless. What is
-comparable, and what the tests assert, is the behaviour: sigma = 0
+Two DP runs never agree on values, by construction -- the mechanism is
+randomized, so a specific coefficient is not a reproducible quantity
+and nothing here should be compared value-for-value against anything.
+What is stable, and what the tests assert, is the behaviour: sigma = 0
 reproduces the lossless fit, error grows with sigma, and gradient-based
 search collapses before gradient-free search does.
 """
@@ -101,7 +98,7 @@ __all__ = [
 ]
 
 DEFAULT_DELTA = 1e-5
-SENSITIVITY = 1.0  # placeholder, as in the R vignettes
+SENSITIVITY = 1.0  # placeholder; see the module docstring
 FINITE_DIFF_STEP = 1e-3
 
 
@@ -139,8 +136,7 @@ def budget(
 def amplification_factor(h: float = FINITE_DIFF_STEP) -> float:
     """How much a central-difference gradient inflates function noise.
 
-    ``sigma*sqrt(2)/(2h)``: at h = 1e-3 this is ~707, the figure the R
-    vignette quotes.
+    ``sqrt(2)/(2h)``: at h = 1e-3 this is ~707.
     """
     return math.sqrt(2) / (2 * h)
 
@@ -200,9 +196,9 @@ def fit_at_sigma(
     # works. Under DP the gradient noise is the function noise divided
     # by h, so scipy's default (~1.5e-8) amplifies sigma by ~7e7 and
     # destroys the gradient even at sigma = 1e-4 -- the optimizer then
-    # returns x0 unchanged and still reports success. R's optim uses
-    # ndeps = 1e-3, giving the ~707x quoted in the vignette; matching
-    # it is what makes the two languages tell the same story.
+    # returns x0 unchanged and still reports success. At h = 1e-3 the
+    # amplification is ~707x, which is survivable; the constant is
+    # load-bearing rather than decorative here.
     if method == "BFGS":
         options = {"gtol": 1e-4, "finite_diff_rel_step": FINITE_DIFF_STEP}
     elif method == "L-BFGS-B":

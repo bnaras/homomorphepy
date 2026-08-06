@@ -1,8 +1,7 @@
 """Cox-lasso on DLBCL gene expression, federated under threshold FHE.
 
-Ports homomorpheR's ``cvxr-cox-lasso-dlbcl.Rmd``. The largest example
-in the set, and the only one where every stage of the pipeline needs
-the encrypted channel:
+The largest example in the set, and the only one where every stage of
+the pipeline needs the encrypted channel:
 
 1. **Standardization.** Column means and second moments are pooled
    across sites under encryption, so no site's marginal distribution
@@ -21,13 +20,11 @@ likelihood is built symbolically as ``log_sum_exp(eta[i:]) - eta[i]``
 over event times so cvxpy can canonicalize it; that expression *is*
 the Breslow form. Efron has no comparable convex-atom formulation.
 So this example and :mod:`.cox` deliberately use different
-conventions -- Efron there via PHReg, Breslow here by construction --
-and the R vignettes do the same.
+conventions -- Efron there via PHReg, Breslow here by construction.
 
-**Real data, so the fixture is the data.** Unlike the simulated
-examples, there is no draw to re-simulate: the DLBCL cohort is what it
-is. Values are compared against R's shipped results
-(``cvxr_consensus_golden.json``).
+**Measured data, so it ships with the package.** Unlike the simulated
+examples there is no draw to repeat: the DLBCL cohort is what it is,
+and every run reads the same bytes.
 
 Expensive: the ADMM runs to ~150 iterations with three per-site conic
 solves each. ``run(recompute_admm=False)`` performs the standardization
@@ -46,7 +43,7 @@ import numpy as np
 from homomorphepy.actors import ThresholdMaster, ThresholdSite, make_threshold_master
 from homomorphepy.context import Context, fhe_context
 from homomorphepy.examples.consensus_admm import SOLVER
-from homomorphepy.fixtures import load_dlbcl, load_dlbcl_gex, load_golden, site_order
+from homomorphepy.fixtures import load_dlbcl, load_dlbcl_gex, site_order
 
 __all__ = ["CoxLassoResult", "run", "K", "LAMBDA", "RHO"]
 
@@ -67,21 +64,33 @@ CKKS_PARAMS = dict(
 @dataclass
 class CoxLassoResult:
     top_idx: np.ndarray
-    r_top_idx: np.ndarray
-    screen_matches_r: bool
-    screen_order_matches_r: bool
     sigma: np.ndarray
     pool_agree_mu: float
     pool_agree_sigma: float
     beta_centralized: np.ndarray | None
     beta_admm: np.ndarray | None
     n_iter: int | None
-    r_agg_beta: np.ndarray
-    r_z_ref: np.ndarray
-    r_z_enc: np.ndarray
-    r_n_iter: int
     context: Context = field(repr=False)
     master: ThresholdMaster = field(repr=False)
+
+    @property
+    def n_nonzero(self) -> int | None:
+        """How many of the K screened probes the lasso retained."""
+        if self.beta_admm is None:
+            return None
+        return int(np.sum(np.abs(self.beta_admm) > 1e-8))
+
+    @property
+    def admm_vs_centralized(self) -> float | None:
+        """Max abs difference: the ADMM fit against the centralized one.
+
+        The split-vs-pooled comparison. Bounded by the ADMM stopping
+        tolerance, not by CKKS noise -- see :attr:`pool_agree_mu` for
+        the size of the encryption error itself.
+        """
+        if self.beta_admm is None or self.beta_centralized is None:
+            return None
+        return float(np.max(np.abs(self.beta_admm - self.beta_centralized)))
 
 
 def _sites_raw():
@@ -105,9 +114,10 @@ def _sites_raw():
 def _score_info_at_zero(X, time, status):
     """Univariate Cox score and information at beta = 0, per column.
 
-    ``np.lexsort((-status, time))`` reproduces R's
-    ``order(time, -status)`` -- note the reversed key order, one of the
-    two sort traps that would silently change which probes are kept.
+    ``np.lexsort((-status, time))`` orders by time, breaking ties so
+    events precede censorings -- note that lexsort takes its keys in
+    reverse priority order, one of the two sort traps that would
+    silently change which probes are kept.
     """
     order = np.lexsort((-status, time))
     Xo, so = X[order], status[order]
@@ -129,7 +139,7 @@ def _breslow_nll(beta, X, time, status):
     ``sum_j in events [ log_sum_exp(eta_{j:}) - eta_j ]`` over
     event-time-ordered rows. This is exactly the Breslow partial
     likelihood; Efron has no equivalent convex-atom form, which is why
-    the two Cox examples use different conventions.
+    this example and :mod:`.cox` use different tie conventions.
     """
     order = np.lexsort((-status, time))
     Xo, so = X[order], status[order]
@@ -145,8 +155,11 @@ def _solve(problem):
 
 
 def run(recompute_admm: bool = True) -> CoxLassoResult:
-    """Run the pipeline; compare against R's shipped results."""
-    golden = load_golden()
+    """Run the standardize / screen / fit pipeline under encryption.
+
+    ``recompute_admm=False`` stops after screening, which is the cheap
+    part; the consensus ADMM at K = 100 takes about half an hour.
+    """
     sites = _sites_raw()
     n_total = sum(len(s["time"]) for s in sites)
     p_raw = sites[0]["X"].shape[1]
@@ -164,8 +177,8 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
     q = np.asarray(master.decrypt(enc_q, length=p_raw), dtype=float) / n_total
     sigma = np.sqrt(np.maximum(q - mu**2, np.finfo(float).eps))
 
-    # Cleartext reference for the same quantities, to size the CKKS
-    # error the vignette reports as pool_agree.
+    # Cleartext reference for the same quantities, which is what makes
+    # pool_agree_mu / pool_agree_sigma a measure of the CKKS error.
     s_ref = sum(s["X"].sum(axis=0) for s in sites) / n_total
     q_ref = sum((s["X"] ** 2).sum(axis=0) for s in sites) / n_total
     sigma_ref = np.sqrt(np.maximum(q_ref - s_ref**2, np.finfo(float).eps))
@@ -183,11 +196,11 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
         dtype=float,
     )
     Z = U / np.sqrt(np.maximum(info, np.finfo(float).eps))
-    # kind="stable" reproduces R's order(); the default quicksort would
-    # break ties differently. Result is 1-based to match R's indices.
+    # kind="stable" matters: probes whose scores are nearly tied at the
+    # K boundary must break by index rather than arbitrarily, or the
+    # retained set changes between runs. 1-based for readability.
     top_idx = np.argsort(-np.abs(Z), kind="stable")[:K] + 1
 
-    r_top = np.asarray(golden["top_idx"], dtype=int)
     sites_KS = [{**s, "X": s["X"][:, top_idx - 1]} for s in sites_std]
 
     beta_central = beta_admm = None
@@ -248,19 +261,12 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
 
     return CoxLassoResult(
         top_idx=top_idx,
-        r_top_idx=r_top,
-        screen_matches_r=set(top_idx.tolist()) == set(r_top.tolist()),
-        screen_order_matches_r=bool(np.array_equal(top_idx, r_top)),
         sigma=sigma,
         pool_agree_mu=float(np.max(np.abs(mu - s_ref))),
         pool_agree_sigma=float(np.max(np.abs(sigma - sigma_ref))),
         beta_centralized=beta_central,
         beta_admm=beta_admm,
         n_iter=n_iter,
-        r_agg_beta=np.asarray(golden["agg_beta"], dtype=float),
-        r_z_ref=np.asarray(golden["z_ref"], dtype=float),
-        r_z_enc=np.asarray(golden["z_enc"], dtype=float),
-        r_n_iter=int(golden["n_iter_enc"]),
         context=ctx,
         master=master,
     )
@@ -271,24 +277,10 @@ if __name__ == "__main__":  # pragma: no cover
 
     full = "--screen-only" not in sys.argv
     r = run(recompute_admm=full)
-    print(f"screen: same {K} probes as R : {r.screen_matches_r}")
-    print(f"        same rank order      : {r.screen_order_matches_r}")
+    print(f"probes screened              : {r.top_idx.size} of 6416")
     print(f"encrypted pooling error  mu  : {r.pool_agree_mu:.2e}")
     print(f"                        sigma: {r.pool_agree_sigma:.2e}")
     if r.beta_admm is not None:
-        print(f"ADMM iterations: python {r.n_iter}, R {r.r_n_iter}")
-        print(
-            f"max |python_admm - R z_enc|      : "
-            f"{np.max(np.abs(r.beta_admm - r.r_z_enc)):.3e}"
-        )
-        print(
-            f"max |python_admm - R z_ref|      : "
-            f"{np.max(np.abs(r.beta_admm - r.r_z_ref)):.3e}"
-        )
-        print(
-            f"max |python_central - R agg_beta|: "
-            f"{np.max(np.abs(r.beta_centralized - r.r_agg_beta)):.3e}"
-        )
-        nz_py = int(np.sum(np.abs(r.beta_admm) > 1e-8))
-        nz_r = int(np.sum(np.abs(r.r_z_enc) > 1e-8))
-        print(f"non-zero coefficients: python {nz_py}, R {nz_r}")
+        print(f"ADMM iterations              : {r.n_iter}")
+        print(f"non-zero coefficients        : {r.n_nonzero} of {K}")
+        print(f"ADMM vs centralized lasso    : {r.admm_vs_centralized:.3e}")

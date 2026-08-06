@@ -41,19 +41,97 @@ $$\text{score} = w_1 x_1 + w_2 x_2 + w_3 x_3 + w_4 x_4 + b$$
 where $x_i$ are biomarker values and $w_i, b$ are proprietary
 coefficients.
 
+## Hospital side: encrypt the biomarkers
+
+Eight patients, each with four biomarker values. We pack each biomarker
+*across patients* — one ciphertext per biomarker, with patient values
+in the slots.
+
+```{python}
+from homomorphepy import fhe_context, packed_codec, Ct
+
+cc = fhe_context("CKKS", multiplicative_depth=2,
+                 scaling_mod_size=50, batch_size=8)
+keys = cc.KeyGen()
+cc.EvalMultKeyGen(keys.secretKey)     # needed for ciphertext * scalar
+codec = packed_codec(cc)
+
+biomarker1 = [1.2, 0.8, 1.5, 0.3, 2.1, 0.9, 1.1, 1.8]
+biomarker2 = [0.5, 1.1, 0.3, 0.8, 0.2, 1.4, 0.7, 0.6]
+biomarker3 = [2.0, 1.5, 2.3, 1.0, 1.8, 2.1, 1.6, 2.5]
+biomarker4 = [0.1, 0.4, 0.2, 0.6, 0.3, 0.1, 0.5, 0.2]
+
+ct1, ct2, ct3, ct4 = (
+    Ct(cc.Encrypt(keys.publicKey, codec.encode(b)), cc.cc)
+    for b in (biomarker1, biomarker2, biomarker3, biomarker4)
+)
+```
+
+## Lab side: evaluate the model without decrypting
+
+The lab's weights never leave the lab, and the ciphertexts it receives
+are opaque to it. The scoring expression reads exactly as it would in
+the clear — that is what the operator wrapper buys:
+
+```{python}
+# The lab's proprietary model. Never shared with the hospital.
+w = [0.35, -0.20, 0.50, 0.15]
+b = 1.2
+
+ct_score = ct1 * w[0] + ct2 * w[1] + ct3 * w[2] + ct4 * w[3] + b
+```
+
+## Hospital side: decrypt the scores
+
+```{python}
+pt = cc.Decrypt(ct_score.raw, keys.secretKey)
+scores = codec.decode(pt, 8)
+
+def risk_band(s):
+    return "HIGH" if s > 2.0 else "MODERATE" if s > 1.5 else "LOW"
+
+import pandas as pd
+
+pd.DataFrame({
+    "patient": range(1, 9),
+    "score":   [round(s, 3) for s in scores],
+    "risk":    [risk_band(s) for s in scores],
+})
+```
+
+## Verification
+
+```{python}
+import numpy as np
+
+cleartext = (np.array(w) @ np.array([biomarker1, biomarker2,
+                                     biomarker3, biomarker4]) + b)
+max_error = float(np.max(np.abs(np.array(scores) - cleartext)))
+max_error
+```
+
+CKKS gives essentially the same answer as cleartext, within
+floating-point precision.
+
+```{python}
+assert max_error < 1e-6
+```
+
+## Packing
+
+All eight patients are scored in four multiply-adds rather than eight
+separate evaluations. Each ciphertext holds *one biomarker across all
+patients* in its slots, so a single homomorphic multiply scales that
+biomarker for everyone at once. This SIMD layout is what makes CKKS
+practical for problems of this shape.
+
+## The same run, in one call
+
 ```{python}
 from homomorphepy.examples import secure_inference
 
 result = secure_inference.run()
 ```
-
-## Packing
-
-All `{python} result.n_patients` patients are scored in four
-multiply-adds rather than eight separate evaluations. Each ciphertext
-holds *one biomarker across all patients* in its slots, so a single
-homomorphic multiply scales that biomarker for everyone at once. This
-SIMD layout is what makes CKKS practical for problems of this shape.
 
 ```{python}
 #| echo: false

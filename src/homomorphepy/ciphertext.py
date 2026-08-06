@@ -9,16 +9,14 @@ all raise ``TypeError``, and there is no ``__radd__``, so even
 Every operation is reachable as ``cc.EvalAdd`` / ``EvalSub`` /
 ``EvalMult`` / ``EvalNegate``, so this is an ergonomics gap rather than
 a capability one. But ciphertext arithmetic is the hot path in every
-protocol: R reads ``Reduce(`+`, cts)`` and ``ct * (1/N)`` because
-``openfhe.R`` supplies the whole operator group through an S3 ``Ops``
-handler. :class:`Ct` restores the same surface here, so ported code
-reads like the R original instead of being transliterated into method
+protocol, and ``sum(cts)`` or ``ct * (1/N)`` is how it should read.
+:class:`Ct` restores the full operator group, so protocol code reads
+as ordinary arithmetic instead of being transliterated into method
 calls.
 
-The dispatch table mirrors ``openfhe.R``'s
-(``R/methods-eval.R:30-80``) — including the asymmetric cases, where
-scalar-minus-ciphertext is computed as ``negate(sub(ct, scalar))``
-because OpenFHE offers no reversed subtraction.
+The asymmetric cases are handled too: scalar-minus-ciphertext is
+computed as ``negate(sub(ct, scalar))``, since OpenFHE offers no
+reversed subtraction.
 """
 
 from __future__ import annotations
@@ -100,7 +98,7 @@ class Ct:
 
     def __rsub__(self, other: Any) -> Ct:
         # OpenFHE has no reversed subtraction: scalar - ct is computed
-        # as -(ct - scalar), matching openfhe.R's methods-eval.R:42-44.
+        # as -(ct - scalar): OpenFHE has no scalar-minus-ciphertext op.
         return self._new(self._cc.EvalNegate(self._cc.EvalSub(self._ct, unwrap(other))))
 
     # -- multiplication -----------------------------------------------

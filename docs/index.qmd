@@ -37,6 +37,32 @@ does not change. An optimizer handed an objective that happens to
 route through encryption converges to the same estimate it would have
 reached on pooled data.
 
+## The shortest complete example
+
+Three sites, each holding a private count, and a coordinator that
+learns only the total:
+
+```{python}
+from homomorphepy import fhe_context, packed_codec, Ct
+
+cc = fhe_context("BFV", plaintext_modulus=65537, multiplicative_depth=1)
+keys = cc.KeyGen()
+codec = packed_codec(cc)
+
+private_counts = [46, 15, 52]          # each known only to its own site
+
+cts = [Ct(cc.Encrypt(keys.publicKey, codec.encode(n)), cc.cc)
+       for n in private_counts]
+
+total = codec.decode(cc.Decrypt(sum(cts).raw, keys.secretKey), 1)[0]
+total
+```
+
+The coordinator added ciphertexts it could not read, and decrypted only
+the sum. BFV is exact integer arithmetic, so the answer is the integer
+and not an approximation of it. Everything else here is this idea with
+more statistics on top.
+
 ## Examples
 
 Ordered by how much machinery they need.

@@ -20,13 +20,28 @@ visible, and it should be **exact**: a count is an integer, and an
 answer of "about 4" is not a count.
 
 We simulate three sites, each with `sex`, `age`, and a biomarker `bm`.
-The query we will run is `age < 50 and sex == "F" and bm < 0.2`.
 
 ```{python}
-from homomorphepy.examples import query_count
+import numpy as np
+import pandas as pd
 
-result = query_count.run()
+SITE_SIZES = (60, 15, 25)
+
+rng = np.random.default_rng(130)
+site_data, start = [], 1
+for n in SITE_SIZES:
+    site_data.append(pd.DataFrame({
+        "id":  [f"P{i:04d}" for i in range(start, start + n)],
+        "sex": rng.choice(["F", "M"], size=n),
+        "age": rng.integers(40, 71, size=n),
+        "bm":  rng.normal(size=n),
+    }))
+    start += n
+
+site_data[0].head()
 ```
+
+The query we will run is `age < 50 and sex == "F" and bm < 0.2`.
 
 ## The target answer
 
@@ -34,9 +49,17 @@ If the data could be pooled in one place, the query is a single
 expression. We compute it here only to have a reference to check the
 distributed protocol against.
 
-The pooled answer is `{python} result.total_cleartext`. No site will
-actually pool its data; this number is the ground truth the encrypted
-protocol must reproduce.
+```{python}
+QUERY = 'age < 50 and sex == "F" and bm < 0.2'
+
+pooled = pd.concat(site_data, ignore_index=True)
+cleartext_count = len(pooled.query(QUERY))
+cleartext_count
+```
+
+The pooled answer is `{python} cleartext_count`. No site will actually
+pool its data; this number is the ground truth the encrypted protocol
+must reproduce.
 
 ## Why the classic solution needed two non-cooperating parties
 
@@ -49,10 +72,10 @@ c_3)$ without decrypting the parts.
 
 The historical difficulty was not the arithmetic but the *trust
 model*. The Paillier cryptosystem, the classic choice for exactly this
-kind of aggregation, has a **single private key**.
-Whoever holds it can decrypt anything — including a lone $E(c_i)$. So
-if the coordinator holds the key, it can read each site's count
-individually, defeating the purpose.
+kind of aggregation, has a **single private key**. Whoever holds it
+can decrypt anything — including a lone $E(c_i)$. So if the
+coordinator holds the key, it can read each site's count individually,
+defeating the purpose.
 
 The workaround was two **non-cooperating parties**, NCP1 and NCP2, who
 do not collude. Each site draws a fresh random $r_i$ and sends the two
@@ -107,58 +130,102 @@ point, so BFV is the right instrument.
 
 ## The threshold-BFV implementation
 
-The crypto context is BFV with the `MULTIPARTY` feature enabled. The
-plaintext modulus only has to exceed the largest total the query could
-return, so the default is comfortable for counts.
-
-`make_threshold_master()` runs the chained key generation across the
-three sites and returns a master holding the joint public key, with
-the per-site secret shares left at the sites. The same master class
-drives CKKS or BFV — it reads the scheme back from the context — so
-the only thing that changed from the real-valued examples is the
-context.
-
-Each site is a worker whose local function evaluates the query against
-its own private data and returns a count. The master broadcasts the
-query; no site sees another site's data, and the counts it returns are
-encrypted before they leave.
-
-One call runs the protocol: each worker's encrypted count is summed
-homomorphically, and the total is jointly decrypted by the three
-secret-share holders.
+The crypto context is BFV. The plaintext modulus only has to exceed
+the largest total the query could return, so 65537 is comfortable for
+counts.
 
 ```{python}
-#| echo: false
-from IPython.display import Markdown
+from homomorphepy import fhe_context
 
-m = result.master
-Markdown(f"""
-| | value |
-|---|---|
-| site sizes | {result.site_sizes} |
-| sites holding a key share | {len(m.sites)} |
-| per-site counts *(never decrypted by anyone)* | {result.per_site_cleartext} |
-| **encrypted total** | **{result.total_encrypted}** |
-| pooled cleartext total | {result.total_cleartext} |
-""")
+cc = fhe_context("BFV", plaintext_modulus=65537, multiplicative_depth=1)
+```
+
+Each site is a `ThresholdSite` holding its own private table and a
+local function. The local function receives the broadcast query and
+evaluates it against that site's rows — this is the only place patient
+records are ever touched.
+
+```{python}
+from homomorphepy.actors import ThresholdSite
+
+def local_count(data, query):
+    return len(data.query(query))
+
+sites = [ThresholdSite(f"Site {i + 1}", rows, local_count)
+         for i, rows in enumerate(site_data)]
+```
+
+`make_threshold_master()` runs the chained key generation across the
+three sites: each ends up holding its own secret share, and the master
+gets only the joint public key. The same master class drives CKKS or
+BFV — it reads the scheme back from the context — so the only thing
+that changed from the real-valued examples is the context above.
+
+```{python}
+from homomorphepy.actors import make_threshold_master
+
+master = make_threshold_master("Coordinator", cc, sites)
+master
+```
+
+The master holds no secret material of its own, which we can check
+directly:
+
+```{python}
+len(master.sites), hasattr(master, "secret_share")
+```
+
+One call runs the protocol: the query is broadcast, each site's count
+is encrypted under the joint public key, the coordinator sums the
+ciphertexts homomorphically, and the total is jointly decrypted by the
+three share holders.
+
+```{python}
+encrypted_count = master.aggregate(QUERY)
+encrypted_count
 ```
 
 ## The encrypted answer is exact
 
+```{python}
+pd.DataFrame({
+    "method": ["pooled cleartext", "threshold-BFV distributed"],
+    "count":  [cleartext_count, int(encrypted_count)],
+})
+```
+
 The threshold-BFV protocol returns
-`{python} result.total_encrypted`, identical to the pooled answer of
-`{python} result.total_cleartext`. Because BFV is exact integer
-arithmetic, the two agree with no tolerance to argue about — the
-equality is bit-for-bit, not approximate.
+`{python} int(encrypted_count)`, identical to the pooled answer of
+`{python} cleartext_count`. Because BFV is exact integer arithmetic,
+the two agree with no tolerance to argue about — the equality is
+bit-for-bit, not approximate.
 
 ```{python}
-assert result.exact
+assert int(encrypted_count) == cleartext_count
+```
+
+The per-site counts, which no party ever decrypts, would have been:
+
+```{python}
+[local_count(rows, QUERY) for rows in site_data]
 ```
 
 The cohort is simulated afresh on each run. What the example claims is
 that the encrypted protocol reproduces the pooled answer *on whatever
 data it was given* — a stronger statement than reproducing one
 particular dataset.
+
+## The same run, in one call
+
+Everything above is packaged as a function, so the protocol can be
+re-run without retyping it:
+
+```{python}
+from homomorphepy.examples import query_count
+
+result = query_count.run()
+result.total_encrypted, result.total_cleartext, result.exact
+```
 
 ## Discussion
 

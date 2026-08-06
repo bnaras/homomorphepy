@@ -21,60 +21,162 @@ carries every stage rather than one:
 3. **Fitting** — a lasso-penalized stratified Cox model by consensus
    ADMM, with only the consensus average encrypted.
 
-## Standardization and screening
+## The cohort
 
 ```{python}
-from homomorphepy.examples import cox_lasso
+import numpy as np
+from homomorphepy import load_dlbcl, load_dlbcl_gex, site_order
 
-result = cox_lasso.run(recompute_admm=False)
+df = load_dlbcl()
+gex, _, _ = load_dlbcl_gex()
+
+def site_raw(name):
+    m = (df["Subgroup"] == name).to_numpy()
+    return {
+        "name":   name,
+        "X":      gex[m],
+        "time":   df["time"].to_numpy(dtype=float)[m],
+        "status": df["status"].to_numpy(dtype=int)[m],
+    }
+
+sites = [site_raw(n) for n in site_order()]
+n_total = sum(len(s["time"]) for s in sites)
+p_raw = sites[0]["X"].shape[1]
+
+[(s["name"], s["X"].shape) for s in sites]
 ```
 
+## Threshold keys
+
 ```{python}
-#| echo: false
-from IPython.display import Markdown
-Markdown(f"""
-| | value |
-|---|---|
-| probes screened | 6416 → {cox_lasso.K} |
-| probes retained | {cox_lasso.K} |
-| encrypted pooling error, means | {result.pool_agree_mu:.1e} |
-| encrypted pooling error, SDs | {result.pool_agree_sigma:.1e} |
-""")
+from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+from homomorphepy.examples.cox_lasso import CKKS_PARAMS
+
+cc = fhe_context("CKKS", **CKKS_PARAMS)
+
+key_holders = [ThresholdSite(s["name"], None, lambda d, t: 0.0) for s in sites]
+master = make_threshold_master("Aggregator", cc, key_holders)
+
+CKKS_PARAMS
+```
+
+`batch_size` has to hold a full 6416-length vector, since a whole
+probe-wise summary rides in the slots of one ciphertext.
+
+## 1. Pooled standardization, under encryption
+
+Each site contributes its column sums and sums of squares. Only the
+*pooled* moments are ever decrypted — no site's marginal distribution
+is revealed.
+
+```{python}
+enc_s = sum(master.encrypt(s["X"].sum(axis=0)) for s in sites)
+enc_q = sum(master.encrypt((s["X"] ** 2).sum(axis=0)) for s in sites)
+
+mu    = np.asarray(master.decrypt(enc_s, length=p_raw), dtype=float) / n_total
+q     = np.asarray(master.decrypt(enc_q, length=p_raw), dtype=float) / n_total
+sigma = np.sqrt(np.maximum(q - mu**2, np.finfo(float).eps))
+
+sites_std = [{**s, "X": (s["X"] - mu) / sigma} for s in sites]
+mu[:4], sigma[:4]
+```
+
+How much the encryption cost, against the same quantities computed in
+the clear:
+
+```{python}
+mu_ref = sum(s["X"].sum(axis=0) for s in sites) / n_total
+q_ref  = sum((s["X"] ** 2).sum(axis=0) for s in sites) / n_total
+sigma_ref = np.sqrt(np.maximum(q_ref - mu_ref**2, np.finfo(float).eps))
+
+float(np.max(np.abs(mu - mu_ref))), float(np.max(np.abs(sigma - sigma_ref)))
+```
+
+Essentially float64 precision — the pooling is a sum and one scalar
+multiply, so it costs one CKKS level and almost no accuracy.
+
+## 2. Screening, under encryption
+
+Each site computes a univariate Cox score and information at
+$\beta = 0$ for every probe; those are pooled under encryption and the
+top $K = 100$ by $|Z|$ are kept.
+
+```{python}
+from homomorphepy.examples.cox_lasso import _score_info_at_zero, K
+
+UI = [_score_info_at_zero(s["X"], s["time"], s["status"]) for s in sites_std]
+
+U    = np.asarray(master.decrypt(sum(master.encrypt(u) for u, _ in UI),
+                                 length=p_raw), dtype=float)
+info = np.asarray(master.decrypt(sum(master.encrypt(i) for _, i in UI),
+                                 length=p_raw), dtype=float)
+
+Z = U / np.sqrt(np.maximum(info, np.finfo(float).eps))
+top_idx = np.argsort(-np.abs(Z), kind="stable")[:K] + 1
+
+top_idx[:10]
 ```
 
 The screening step deserves care. Probes whose statistics are nearly
-tied at the K=100 boundary can swap under a one-ulp perturbation, and
-a different retained set means a different model — so the pipeline is
+tied at the $K$ boundary can swap under a one-ulp perturbation, and a
+different retained set means a different model — so the pipeline is
 built to be reproducible bit-for-bit at that boundary.
 
 Three things make that hold. The expression matrix is stored as raw
 float64 rather than text, which at 15 significant digits would drop
 bits that matter at the cutoff. The event-time ordering uses
 `np.lexsort((-status, time))`, whose key order is easy to reverse by
-accident. And the ranking uses a stable sort, so ties break by index
+accident. And the ranking uses `kind="stable"`, so ties break by index
 rather than arbitrarily.
 
-## The full fit
+```{python}
+gaps = np.diff(np.sort(np.abs(Z))[::-1][:K + 1])
+float(np.abs(gaps[-1]))     # the gap at the K=100 boundary
+```
+
+## 3. The lasso fit by consensus ADMM
+
+The local subproblem is a Breslow partial likelihood written as a
+cvxpy expression plus the ADMM proximal term. Only the consensus
+average leaves a site, and it is encrypted:
+
+```{python}
+#| eval: false
+ct = sum(master.encrypt(x + u) for x, u in zip(site_x, site_u))
+w_avg = np.asarray(master.decrypt(ct * (1.0 / n_sites), length=K))
+
+# Soft threshold for the L1 penalty, applied to the consensus.
+tau = LAMBDA / (n_sites * RHO)
+z_new = np.sign(w_avg) * np.maximum(np.abs(w_avg) - tau, 0.0)
+```
 
 The ADMM runs to convergence with three per-site conic solves per
-iteration, which takes about half an hour. Results below come from a
-recorded run read out of `_recorded/cox_lasso_run.json` rather than
-executed at render time. The numbers are read from that file, never
-typed into this prose.
+iteration, which takes about half an hour — too slow for a
+documentation render. The results below come from a recorded run
+produced by `docs/_recorded/record_cox_lasso.py`, read out of the JSON
+it writes. The numbers are read from that file, never typed into this
+prose.
 
 ```{python}
 #| echo: false
 import json
+import math
 from pathlib import Path
+from IPython.display import Markdown
+
+from homomorphepy.examples import cox_lasso
 
 rec = json.loads(Path("_recorded/cox_lasso_run.json").read_text())
 Markdown(f"""
 | quantity | value |
 |---|---|
-| ADMM iterations to convergence | {rec['n_iter_python']} |
-| non-zero coefficients retained | {rec['nonzero_python']} of 100 |
-| encrypted vs plaintext ADMM fit | {rec['max_abs_admm_vs_r_zref']:.1e} |
-| pooled moments, encrypted vs cleartext | {rec['pool_agree_mu']:.1e} |
+| probes screened | {rec['n_probes_total']} → {rec['n_probes_screened']} |
+| ADMM iterations to convergence | {rec['n_iter']} |
+| non-zero coefficients retained | {rec['n_nonzero']} of {rec['n_probes_screened']} |
+| ADMM fit vs centralized lasso | {rec['admm_vs_centralized']:.1e} |
+| ADMM stopping tolerance | {cox_lasso.TOL:.0e} |
+| encrypted pooling error, means | {rec['pool_agree_mu']:.1e} |
+| encrypted pooling error, SDs | {rec['pool_agree_sigma']:.1e} |
 
 *Recorded run: {rec['wall_clock_minutes']:.0f} min.*
 """)
@@ -83,23 +185,35 @@ Markdown(f"""
 Reproduce with:
 
 ```bash
-python -m homomorphepy.examples.cox_lasso
+OMP_NUM_THREADS=2 uv run python docs/_recorded/record_cox_lasso.py
 ```
 
-The lasso retains
-`{python} rec['nonzero_python']` of the 100 screened probes, and the
-encrypted fit agrees with its plaintext counterpart to
-`{python} f"{rec['max_abs_admm_vs_r_zref']:.1e}"` — four orders
-tighter than the ADMM convergence tolerance requires, meaning
-encryption perturbs the trajectory far less than the stopping rule
-does.
+The lasso retains `{python} rec['n_nonzero']` of the
+`{python} rec['n_probes_screened']` screened probes.
+
+The ADMM fit agrees with the centralized lasso — the same penalized
+problem solved as one pooled convex program — to
+`{python} f"{rec['admm_vs_centralized']:.1e}"`. Read that as a
+statement about **the ADMM stopping rule, not about encryption**: the
+loop halts when its residuals fall below
+`{python} f"{cox_lasso.TOL:.0e}"`, so the iterate is near the optimum
+rather than at it, and the gap above sits below that threshold as it
+should.
+
+The encryption cost is a separate and much smaller quantity — the
+pooled moments come back accurate to
+`{python} f"{rec['pool_agree_mu']:.0e}"`, some
+`{python} round(math.log10(rec['admm_vs_centralized'] / rec['pool_agree_mu']))`
+orders tighter than the ADMM's own convergence gap. Conflating the two
+is how an optimizer's stopping tolerance gets reported as
+cryptographic error.
 
 ## On the iteration count
 
-The run converges in `{python} rec['n_iter_python']` iterations, but
-that number is a property of this problem rather than a guarantee: the
-loop stops when residuals first fall below a fixed threshold, so the
-count is where a continuous quantity crosses a line. The [consensus
+The run converges in `{python} rec['n_iter']` iterations, but that
+number is a property of this problem rather than a guarantee: the loop
+stops when residuals first fall below a fixed threshold, so the count
+is where a continuous quantity crosses a line. The [consensus
 ADMM](consensus-admm.qmd) example shows the same count shifting by one
 under CKKS noise alone. Here the residuals are not near a boundary, so
 it is stable.
@@ -110,5 +224,4 @@ The partial likelihood is built symbolically as
 `log_sum_exp(eta[i:]) - eta[i]` so a convex solver can canonicalize
 it. That expression *is* Breslow's form; Efron's has no comparable
 convex-atom formulation. The [Cox regression](cox.qmd) example, which
-calls a fitted likelihood rather than building one, uses Efron to
-match `survival::coxph`'s default.
+calls a fitted likelihood rather than building one, uses Efron.

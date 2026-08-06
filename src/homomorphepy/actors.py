@@ -1,27 +1,22 @@
 """Site and Master actors for multi-site protocols.
 
-The Python counterpart of homomorpheR's ``R/sites.R``. A :class:`Site`
+A :class:`Site`
 holds local data and a ``local_fn(data, theta)`` computing a site-level
 summary; a master owns the keys and runs the protocol. The protocol
 body is backend-agnostic: it calls :meth:`Master.encrypt` and
 :meth:`Master.decrypt`, which the concrete masters implement.
 
-Two deliberate departures from the R original.
+**Secret shares live at the sites.** A threshold master that held
+every ``sk_i`` itself would be a single-process simulation: convenient,
+but it could not be split across processes without shipping private
+keys over the wire, which would destroy the point. Here each
+:class:`ThresholdSite` holds its own share and returns a *partial
+decryption*; the master fuses partials and never sees a share.
 
-**Secret shares live at the sites.** homomorpheR's ``ThresholdMaster``
-holds every ``sk_i`` itself and performs lead/main/fusion locally, an
-explicitly acknowledged single-process simulation
-(``R/sites.R:399-401``). That shape cannot be split across processes or
-languages without shipping private keys over the wire, which would
-destroy the point of the demonstration. Here each :class:`ThresholdSite`
-holds its own share and returns a *partial decryption*; the master
-fuses partials and never sees a share. Decision D6 and the
-cryptography review both call for this.
-
-**No round-robin.** The chain idiom is part of homomorpheR's frozen
-Paillier-era surface and no current example uses it. The supported
-topology is master/worker fan-in, which is what distcomp and
-DataSHIELD-style deployments actually use.
+**Master/worker fan-in, not a round robin.** The supported topology is
+a star with the master at the center and one independent worker per
+site -- what distcomp- and DataSHIELD-style deployments actually use.
+There is no inter-site communication.
 """
 
 from __future__ import annotations
@@ -99,7 +94,7 @@ class ThresholdSite(Site):
 
         Note the Python binding shape: only the *vector* overloads are
         bound, and the arguments are (ciphertexts, key) -- reversed
-        relative to R's ``multiparty_decrypt_lead(cc, sk, ct)``. The
+        relative to OpenFHE's ``MultipartyDecryptLead``. The
         list wrapping and ``[0]`` indexing here absorb that.
         """
         if self.secret_share is None:
@@ -117,7 +112,7 @@ class Master:
     """Abstract master: owns keys, drives the protocol.
 
     Concrete subclasses implement :meth:`encrypt` and :meth:`decrypt`.
-    ``decrypt`` takes ``length`` on every backend -- homomorpheR's
+    ``decrypt`` takes ``length`` on every backend --
     Paillier master omitted it and S7 tolerated the arity difference
     via ``...``, but Paillier is out of scope here so the signature is
     uniform from the start (D5).
@@ -166,7 +161,7 @@ class Master:
         Each worker computes its local summary at ``theta``; the
         summaries are encrypted, summed homomorphically, and the total
         decrypted. Returns NaN if any worker reports non-evaluable,
-        mirroring homomorpheR's ``master_aggregate`` returning
+        returning
         ``NA_real_``.
 
         NaN rather than None is deliberate: scipy's optimizers raise
@@ -230,7 +225,7 @@ class ThresholdMaster(Master):
     ``pk_{1..i-1}``. Encryption is under the final joint key.
     Decryption needs every site's partial, which the master fuses.
 
-    Unlike homomorpheR's version, this master never holds a share --
+    This master never holds a share --
     see the module docstring.
     """
 
@@ -311,13 +306,12 @@ def make_threshold_master(
     public key. Requires at least two sites -- one is a degenerate case
     needing no threshold scheme.
 
-    ``MULTIPARTY`` is enabled here rather than demanded of the caller.
-    homomorpheR requires the feature to be passed to ``fhe_context()``
-    and errors otherwise; a threshold master categorically needs it, so
-    forgetting is a pure footgun whose only symptom is an OpenFHE C++
-    error several calls later. ``Enable`` is idempotent, so passing
-    ``features=[PKESchemeFeature.MULTIPARTY]`` as the R examples do
-    remains correct.
+    ``MULTIPARTY`` is enabled here rather than demanded of the caller:
+    a threshold master categorically needs it, so forgetting would be a
+    pure footgun whose only symptom is an OpenFHE C++ error several
+    calls later. ``Enable`` is idempotent, so passing
+    ``features=[PKESchemeFeature.MULTIPARTY]`` to ``fhe_context()``
+    as well remains correct.
     """
     sites = list(sites)
     if len(sites) < 2:

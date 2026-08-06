@@ -1,8 +1,8 @@
 """Poisson MLE driven through an encrypted channel.
 
-Ported from homomorpheR's ``mle.Rmd``. Three sites hold counts of the
-same adverse event. Nobody will share their counts, but all are willing
-to compute the joint maximum-likelihood estimate of the rate.
+Three sites hold counts of the same adverse event. Nobody will share
+their counts, but all are willing to compute the joint
+maximum-likelihood estimate of the rate.
 
 The point of the example is that **the optimizer is not modified**. It
 is handed an objective that happens to route through encryption --
@@ -13,11 +13,11 @@ estimate as the pooled cleartext fit.
 On the finite-difference step
 -----------------------------
 
-A review predicted this would be a problem: R's ``optim`` builds its
-numeric gradient with ``ndeps = 1e-3``, whereas SciPy's default step is
-``sqrt(eps) ~ 1.5e-8``, and the argument was that the smaller step
-would fall below the CKKS noise floor and leave BFGS differentiating
-noise.
+A finite-difference gradient divides a difference of objective values
+by the step ``h``, so noise in the objective is amplified by ``1/h``.
+SciPy's default step is ``sqrt(eps) ~ 1.5e-8``, small enough that it
+is reasonable to expect the CKKS noise floor to swamp the gradient and
+leave BFGS differentiating noise.
 
 **Measured, that does not happen here.** At depth 1 and
 ``scaling_mod_size = 50``, on an objective of magnitude ~100:
@@ -27,28 +27,28 @@ decrypted absolute error     ~1.1e-13
 spread over repeated evals   ~2.0e-13
 implied gradient noise
   at SciPy's default step    ~1.7e-06
-  at R's 1e-3 step           ~2.5e-11
+  at a 1e-3 step             ~2.5e-11
 true gradient at lambda = 9  -0.78
 ===========================  =========
 
 The gradient signal is five to six orders of magnitude above the noise
 even at the default step, and both settings converge: the default
 lands 9.2e-07 from the pooled estimate, the widened step 2.6e-07. CKKS
-at these parameters is far more precise than the prediction assumed --
+at these parameters is far more precise than one might assume --
 1e-13 absolute on a value of 100 is essentially float64 precision.
 
-:data:`FINITE_DIFF_STEP` still matches R's ``ndeps``, for
-cross-language comparability rather than out of necessity, and because
-it is marginally more accurate. It is not load-bearing. A deeper
-circuit with a larger scaling factor could change the balance, so
+:data:`FINITE_DIFF_STEP` widens the step anyway, since it is
+marginally more accurate, but it is not load-bearing. A deeper circuit
+with a larger scaling factor could change the balance, so
 ``tests/test_examples.py`` records the measurement and will flag it if
-the two settings ever stop agreeing.
+the two settings ever stop agreeing. The step *does* become
+load-bearing under differential privacy, where the injected noise is
+many orders larger than CKKS's.
 
-The other difference is the non-evaluable case. R's optimizer backs off
-when the objective returns ``NA``; SciPy's line search does not, and a
-``None`` objective raises ``TypeError``. :func:`make_objective`
-therefore converts a non-evaluable parameter into a large finite
-penalty, which the line search *can* act on.
+One further wrinkle: a parameter outside the support makes the
+objective non-evaluable, and SciPy's line search cannot act on NaN.
+:func:`make_objective` converts that into a large finite penalty,
+which the line search *can* step back from.
 """
 
 from __future__ import annotations
@@ -64,20 +64,40 @@ from scipy.stats import norm
 
 from homomorphepy.actors import CKKSMaster, make_ckks_master, make_worker
 from homomorphepy.context import Context, fhe_context
-from homomorphepy.fixtures import load_json
 
 __all__ = [
     "FINITE_DIFF_STEP",
     "PENALTY",
+    "N",
+    "TRUE_LAMBDA",
+    "SITE_SPLIT",
     "MLEResult",
+    "simulate",
     "local_nll",
     "make_objective",
     "run",
 ]
 
-# Matches R's optim(control = list(ndeps = 1e-3)), for cross-language
-# comparability. Measured, NOT required -- see the module docstring.
+N = 40  # total counts across all sites
+TRUE_LAMBDA = 10.0  # the rate the data is drawn at
+SITE_SPLIT = (20, 7, 13)  # how those counts are distributed
+
+# Wider than SciPy's default sqrt(eps) ~ 1.5e-8. Marginally more
+# accurate here, but measured NOT required -- see the module docstring.
 FINITE_DIFF_STEP = 1e-3
+
+
+def simulate(seed: int = 17822) -> list[np.ndarray]:
+    """Poisson counts, partitioned across three sites.
+
+    One pooled draw split into three unequal pieces, mirroring three
+    hospitals of different sizes counting the same adverse event.
+    """
+    rng = np.random.default_rng(seed)
+    y = rng.poisson(TRUE_LAMBDA, size=N)
+    bounds = np.cumsum((0,) + SITE_SPLIT)
+    return [y[a:b] for a, b in zip(bounds[:-1], bounds[1:], strict=True)]
+
 
 # Returned for a parameter no site can evaluate. Finite, so the line
 # search backs off rather than propagating NaN through the Wolfe tests.
@@ -134,10 +154,9 @@ class MLEResult:
         )
 
 
-def run(start: float = 5.0) -> MLEResult:
+def run(start: float = 5.0, seed: int = 17822) -> MLEResult:
     """Fit the Poisson rate through the encrypted channel."""
-    fixture = load_json("mle_poisson")
-    sites_data = [s["y"] for s in fixture["sites"]]
+    sites_data = simulate(seed)
 
     ctx = fhe_context("CKKS", multiplicative_depth=1, scaling_mod_size=50, batch_size=8)
     keys = ctx.KeyGen()
@@ -171,8 +190,7 @@ def run(start: float = 5.0) -> MLEResult:
 
     # Standard error from the analytic Fisher information, n/lambda.
     # NOT from fit.hess_inv: the BFGS inverse-Hessian approximation is
-    # unreliable as a variance estimate (and R's SE comes from a
-    # numeric Hessian at ndeps=1e-3, not from the quasi-Newton state).
+    # unreliable as a variance estimate.
     n = int(pooled.size)
     se = float(math.sqrt(lam_hat / n))
 

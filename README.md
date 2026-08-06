@@ -1,49 +1,91 @@
 # homomorphepy
 
-Multi-site privacy-preserving statistics over homomorphic encryption —
-the Python twin of the R package
-[homomorpheR](https://github.com/bnaras/homomorpheR), built on
+Multi-site privacy-preserving statistics over homomorphic encryption,
+built on [OpenFHE](https://openfhe.org) via
 [openfhe-python](https://github.com/openfheorg/openfhe-python).
 
-Both packages sit on the same OpenFHE C++ library and run the same
-worked examples: threshold-FHE Cox regression, maximum likelihood
-across sites, consensus ADMM, secure inference, aggregation, similarity
-search, and exact integer query counting under BFV.
+Several sites hold data they will not share. They are willing to
+compute a *joint* result, provided no party — including whoever
+coordinates the computation — learns anything about an individual
+site's contribution. Each site computes a summary of its own data,
+encrypts it, and sends the ciphertext; the coordinator adds the
+ciphertexts without decrypting them and recovers only the total. Under
+threshold keys the decryption key is split across the sites, so no
+single party can decrypt anything at all.
 
-**Status: early development.** The fixture layer and the backend facade
-are in place; the protocol actors and the worked examples are not yet.
+What makes this practical for statistics is that the analysis code does
+not change. An optimizer handed an objective that happens to route
+through encryption converges to the same estimate it would have reached
+on pooled data.
 
-## Why the examples share fixtures with R
+```python
+from homomorphepy import fhe_context, packed_codec, Ct
 
-R's `rpois`, `rbinom`, `sample` and `rnorm` algorithms have no numpy
-equivalent — no amount of seeding makes Python reproduce R's stream.
-Eight of the twelve worked examples simulate their inputs that way, so
-re-simulating here would compute on *different data* and leave nothing
-meaningful to compare against the R results.
+cc = fhe_context("BFV", plaintext_modulus=65537, multiplicative_depth=1)
+keys = cc.KeyGen()
+codec = packed_codec(cc)
 
-Instead the inputs are exported once from R and both languages read the
-same bytes. Everything in `homomorphepy.fixtures` asserts rather than
-infers: dtypes and category orders come from a manifest, and every file
-is checked against a SHA-256 digest on load. A stale fixture fails
-loudly, because the alternative — a silent mismatch — would make a
-Python-vs-R disagreement look like a binding defect.
+private_counts = [46, 15, 52]          # each known only to its own site
 
-That also means the fixture layer needs no crypto backend, so the
-package can be developed and tested on platforms where `openfhe`
-cannot currently be installed.
+cts = [Ct(cc.Encrypt(keys.publicKey, codec.encode(n)), cc.cc)
+       for n in private_counts]
+
+codec.decode(cc.Decrypt(sum(cts).raw, keys.secretKey), 1)[0]   # 113
+```
+
+## Worked examples
+
+Each is a module under `homomorphepy.examples` exposing `run()`, and a
+documentation page that builds the same protocol step by step:
+
+| Example | What it shows |
+|---|---|
+| `aggregation` | Encrypted counting under a single-decrypter coordinator. Exact under BFV. |
+| `query_count` | The same count under threshold keys, where nobody can decrypt alone. |
+| `mle` | An unmodified optimizer driving an encrypted objective. |
+| `secure_inference` | A lab scoring patients it cannot see — and the attack this does *not* prevent. |
+| `cox` | Stratified Cox regression across three sites, single-decrypter or threshold. |
+| `consensus_admm` | Convex optimization where only the consensus step is encrypted. |
+| `cox_lasso` | The full pipeline on gene expression: encrypted standardization, screening, penalized fit. |
+| `dp` | What adding differential privacy on top costs. A demonstration, not a recommendation. |
+
+```
+uv run python -m homomorphepy.examples.query_count
+```
+
+## Data
+
+**Simulated examples draw their own data.** Where the setting is a
+data-generating process rather than a measurement, each run simulates
+afresh. The claim being made is that the encrypted protocol reproduces
+the cleartext answer *on whatever data it was given*, which is stronger
+than reproducing one stored dataset — and the tests check it across
+several draws.
+
+**Measured data ships with the package.** The Rosenwald DLBCL cohort
+used by the Cox examples is what it is; there is no draw to repeat, so
+every run reads the same bytes. The expression matrix travels as raw
+float64 rather than text, because the screening step ranks 6416 probes
+and keeps 100, and probes nearly tied at that boundary can swap under a
+one-ulp perturbation that a text round-trip would introduce.
 
 ```python
 from homomorphepy import load_dlbcl, load_dlbcl_gex, site_order
 
-df = load_dlbcl()  # dtypes and site order forced
-gex, rows, cols = load_dlbcl_gex()  # bit-exact float64
-site_order()  # ['GCB', 'ABC', 'Type III']
+df = load_dlbcl()                    # dtypes and site order forced
+gex, rows, cols = load_dlbcl_gex()   # bit-exact float64
+site_order()                         # ['GCB', 'ABC', 'Type III']
 ```
 
-Site order is protocol semantics, not presentation: sites are visited
-in that order and the first one is the lead decryptor in the threshold
-decryption. Sorting the sites alphabetically would silently permute the
-protocol, so the order is declared and asserted.
+Everything in `homomorphepy.fixtures` asserts rather than infers:
+dtypes and category orders come from a manifest, and every file is
+checked against a SHA-256 digest on load. Site order is protocol
+semantics, not presentation — sites are visited in that order and the
+first is the lead decryptor in the threshold decryption, so sorting
+them alphabetically would silently permute the protocol.
+
+That layer needs no crypto backend, so the package can be developed and
+tested on platforms where `openfhe` cannot currently be installed.
 
 ## Installing the crypto backend
 
@@ -82,23 +124,29 @@ robust than relying on import order. Upstream openfhe-python binds no
 thread-control API; that is filed as a defect, and this helper will
 switch to calling it once a release exposes it.
 
+## Documentation
+
+The site is built with Quarto and every page executes: each number in
+the prose comes from code that ran during the render, never from a
+value typed by hand.
+
+```
+cd docs && OMP_NUM_THREADS=2 uv run quarto render
+```
+
+Two computations are too slow to run on every render — the Cox-lasso
+consensus ADMM (~30 min) and the differential-privacy sweep (~10 min).
+Those are recorded once by the scripts in `docs/_recorded/`, which
+write the JSON the pages read. Nothing is hidden: re-running the script
+regenerates the numbers.
+
 ## Development
 
 ```
 uv sync                  # dev dependencies
-uv run pytest            # fixture + facade tests (no backend needed)
+uv run pytest            # 130 tests; add -m slow for the ADMM pipeline
 uv run ruff check .
 ```
-
-Fixtures are staged from the monorepo:
-
-```
-bash ../../fixtures/sync_fixtures.sh src/homomorphepy/fixtures
-```
-
-That regenerates them from homomorpheR, verifies them, stages them, and
-re-verifies the staged copy. Nothing is copied unless verification
-passes.
 
 ## License
 

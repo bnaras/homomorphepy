@@ -20,11 +20,34 @@ repeated queries can reveal. This page shows what that costs. It is
 not advice to add it.
 :::
 
+## The mechanism
+
 Each of the $N$ sites adds $\mathcal{N}(0, \sigma^2/N)$ to its own
-contribution before encrypting, so the decrypted aggregate carries
+contribution *before encrypting*, so the decrypted aggregate carries
 $\mathcal{N}(0, \sigma^2)$ exactly. Nobody holds the noiseless value
 at any point — an aggregator that is compromised sees ciphertexts of
 *already noised* contributions.
+
+That is the only change to the site function. Everything else — the
+threshold keys, the aggregation, the optimizer — is the [Cox
+example](cox.qmd) unmodified:
+
+```{python}
+import numpy as np
+from homomorphepy.examples.cox import local_cox_nll
+
+def make_noisy_local(sigma, n_sites, rng):
+    """Wrap a site's local function with its share of the DP noise."""
+    scale = sigma / np.sqrt(n_sites)
+
+    def noisy_local(data, beta):
+        value = local_cox_nll(data, beta)
+        if value is None or np.isnan(value):
+            return np.nan
+        return value + (rng.normal(0.0, scale) if sigma > 0 else 0.0)
+
+    return noisy_local
+```
 
 ## The accounting
 
@@ -33,22 +56,27 @@ $\rho = (\Delta/\sigma)^2/2$-zCDP, $T$ queries compose to $T\rho$, and
 $\varepsilon = \rho + 2\sqrt{\rho\log(1/\delta)}$.
 
 ```{python}
-from homomorphepy.examples import dp
+import math
 
-few = dp.budget(n_queries=150, sigma=1e-2)
-many = dp.budget(n_queries=4000, sigma=1e-2)
+def zcdp_to_epsilon(rho, delta=1e-5):
+    return rho + 2 * math.sqrt(rho * math.log(1 / delta))
+
+def budget(n_queries, sigma, delta=1e-5, sensitivity=1.0):
+    rho_q = (sensitivity / sigma) ** 2 / 2
+    rho_total = n_queries * rho_q
+    return rho_total, zcdp_to_epsilon(rho_total, delta)
+
+import pandas as pd
+
+pd.DataFrame(
+    [(n, 1e-2) + budget(n, 1e-2) for n in (150, 4000)],
+    columns=["queries", "sigma", "rho total", "epsilon at delta=1e-5"],
+)
 ```
 
-```{python}
-#| echo: false
-from IPython.display import Markdown
-Markdown(f"""
-| queries | σ | ρ total | ε at δ=1e-5 |
-|---|---|---|---|
-| {few['n_queries']} | {few['sigma']:g} | {few['rho_total']:.3g} | {few['epsilon']:.3g} |
-| {many['n_queries']} | {many['sigma']:g} | {many['rho_total']:.3g} | {many['epsilon']:.3g} |
-""")
-```
+The query count is not a free parameter: it is however many objective
+evaluations the optimizer happens to need, so the choice of optimizer
+sets the privacy bill.
 
 Sensitivity $\Delta = 1$ is a placeholder throughout. Deriving a
 defensible sensitivity bound for a Cox partial likelihood is a
@@ -58,33 +86,86 @@ separate problem and not attempted here.
 
 A finite-difference gradient divides a difference of noisy function
 values by the step $h$, so function-value noise $\sigma$ becomes
-gradient noise of roughly $\sigma\sqrt{2}/(2h)$ — an amplification of
-`{python} f"{dp.amplification_factor(1e-3):.0f}"`× at $h = 10^{-3}$.
-Near the optimum the true gradient is small and that noise dominates.
+gradient noise of roughly $\sigma\sqrt{2}/(2h)$:
+
+```{python}
+def amplification_factor(h):
+    return math.sqrt(2) / (2 * h)
+
+pd.DataFrame({
+    "finite-difference step": ["1e-3", "1.49e-8 (SciPy's default)"],
+    "amplification": [f"{amplification_factor(1e-3):.0f}x",
+                      f"{amplification_factor(1.49e-8):.1e}x"],
+})
+```
+
+Near the optimum the true gradient is small, and that noise dominates.
+
+## Measured
+
+Fitting the stratified Cox model on the DLBCL cohort at a range of
+$\sigma$, with a gradient-based and a gradient-free optimizer. Each
+row is a full fit through the encrypted channel; the whole sweep takes
+several minutes, so it is recorded by
+`docs/_recorded/record_dp_sweep.py` rather than run at render time.
+
+Reading the table needs one caution. A *collapsed* fit — one that
+returns its all-zero starting point — has an error of exactly
+$\max_j |\beta_j^{\text{centralized}}|$, because that is the distance
+from the origin to the true fit. So the collapsed rows all report the
+same error, and that number says nothing about how much noise was
+added; it is a ceiling, not a measurement. The collapse is what
+matters, which is why those cells report the size of the coefficients
+the optimizer actually returned.
 
 ```{python}
 #| echo: false
-Markdown(f"""
-| finite-difference step | amplification |
-|---|---|
-| 1e-3 | {dp.amplification_factor(1e-3):.0f}× |
-| 1.49e-8 (SciPy's default) | {dp.amplification_factor(1.49e-8):.1e}× |
-""")
+import json
+from pathlib import Path
+from IPython.display import Markdown
+
+rec = json.loads(Path("_recorded/dp_sweep.json").read_text())
+rows = {(r["sigma"], r["method"]): r for r in rec["rows"]}
+sigmas = sorted({r["sigma"] for r in rec["rows"]})
+
+def cell(r):
+    if r is None:
+        return "—"
+    if r["collapsed"]:
+        return f"**collapsed** (max\\|β\\| = {r['max_abs_beta']:.0e})"
+    return f"{r['max_abs_diff']:.3f}, {r['sign_agreement']}/5 signs"
+
+body = "\n".join(
+    f"| {s:g} | {cell(rows.get((s, 'BFGS')))} "
+    f"| {cell(rows.get((s, 'Nelder-Mead')))} |"
+    for s in sigmas
+)
+scale = rec["rows"][0]["reference_scale"]
+Markdown(
+    "| σ | BFGS (finite-difference gradient) | Nelder–Mead (gradient-free) |\n"
+    "|---|---|---|\n" + body +
+    f"\n\n*Recorded run: {rec['wall_clock_minutes']:.0f} min. "
+    f"Error is the max absolute difference from the centralized "
+    f"cleartext fit. A fit is reported as collapsed when its largest "
+    f"coefficient is under {rec['collapse_fraction']:.0%} of the "
+    f"centralized scale ({scale:.3f}) — it never left the origin.*"
+)
 ```
 
-Measured at the DLBCL Cox fit, against the centralized estimate:
+The query cost of that robustness, and therefore its privacy cost:
 
-| σ | BFGS (finite-difference gradient) | Nelder–Mead (gradient-free) |
-|---|---|---|
-| 0 | exact, 5/5 signs correct | 0.002, 5/5 |
-| 1e-4 | **collapsed to β = 0** | 0.009, 5/5 |
-| 1e-3 | collapsed | 0.114, 5/5 |
-| 1e-2 | collapsed | 0.319, 4/5 |
-| 1e-1 | collapsed | collapsed, 2/5 |
+```{python}
+#| echo: false
+q = {r["method"]: r["n_queries"] for r in rec["rows"] if r["sigma"] == 0.0}
+Markdown(
+    "| optimizer | objective evaluations at σ=0 |\n|---|---|\n"
+    + "\n".join(f"| {m} | {n} |" for m, n in q.items())
+)
+```
 
-Gradient-free search tolerates roughly three orders of magnitude more
-noise — at about 25× the queries, and therefore about 25× the privacy
-budget at equal $\sigma$. That trade is the whole point.
+Gradient-free search tolerates far more noise, at many times the
+queries — and therefore many times the privacy budget at equal
+$\sigma$. That trade is the whole point.
 
 ## Why widening the step does not rescue it
 
@@ -100,10 +181,32 @@ search direction. No step size rescues that; the search cannot accept
 a step it cannot verify.
 
 Gradient-free search has no such condition to satisfy, which is why it
-survives noise three orders of magnitude larger. The general lesson:
-any optimizer that infers derivatives by differencing nearby function
+survives noise orders of magnitude larger. The general lesson: any
+optimizer that infers derivatives by differencing nearby function
 values will meet this failure mode against any DP mechanism adding
 enough noise to be meaningful.
 
 None of this is a defect in the cryptographic protocol. The protocol
 releases exactly what it promises.
+
+## Reproducing
+
+```bash
+OMP_NUM_THREADS=2 uv run python docs/_recorded/record_dp_sweep.py
+```
+
+A single fit at one $\sigma$, if you only want to see the mechanism
+run:
+
+```{python}
+from homomorphepy.examples import dp
+
+fit = dp.fit_at_sigma(1e-3, method="Nelder-Mead", seed=1)
+fit.sigma, round(fit.max_abs_diff, 4), fit.sign_agreement, fit.n_queries
+```
+
+Two DP runs never agree on values, by construction — the mechanism is
+randomized, so a specific coefficient is not a reproducible quantity.
+What is stable is the behaviour: $\sigma = 0$ reproduces the lossless
+fit, error grows with $\sigma$, and gradient-based search collapses
+before gradient-free search does.
