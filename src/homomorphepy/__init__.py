@@ -11,6 +11,9 @@ it.
 """
 
 from homomorphepy._backend import backend, have_backend, set_thread_env
+from homomorphepy.ciphertext import Ct, unwrap, wrap
+from homomorphepy.codec import Codec, packed_codec
+from homomorphepy.context import Context, Scheme, fhe_context
 from homomorphepy.fixtures import (
     FixtureError,
     Tolerance,
@@ -27,10 +30,15 @@ from homomorphepy.fixtures import (
 __version__ = "1.5.1.dev0"
 
 __all__ = [
+    "Codec",
+    "Context",
+    "Ct",
     "FixtureError",
+    "Scheme",
     "Tolerance",
     "__version__",
     "backend",
+    "fhe_context",
     "fixture_dir",
     "have_backend",
     "load_dlbcl",
@@ -38,7 +46,10 @@ __all__ = [
     "load_golden",
     "load_json",
     "manifest",
+    "packed_codec",
     "set_thread_env",
     "site_order",
+    "unwrap",
     "verify_all",
+    "wrap",
 ]
