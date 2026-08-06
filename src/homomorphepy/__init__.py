@@ -11,6 +11,17 @@ it.
 """
 
 from homomorphepy._backend import backend, have_backend, set_thread_env
+from homomorphepy.actors import (
+    CKKSMaster,
+    Master,
+    Site,
+    ThresholdMaster,
+    ThresholdSite,
+    make_ckks_master,
+    make_site,
+    make_threshold_master,
+    make_worker,
+)
 from homomorphepy.ciphertext import Ct, unwrap, wrap
 from homomorphepy.codec import Codec, packed_codec
 from homomorphepy.context import Context, Scheme, fhe_context
@@ -30,6 +41,15 @@ from homomorphepy.fixtures import (
 __version__ = "1.5.1.dev0"
 
 __all__ = [
+    "make_worker",
+    "make_threshold_master",
+    "make_site",
+    "make_ckks_master",
+    "ThresholdSite",
+    "ThresholdMaster",
+    "Site",
+    "Master",
+    "CKKSMaster",
     "Codec",
     "Context",
     "Ct",
