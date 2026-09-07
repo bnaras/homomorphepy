@@ -182,6 +182,54 @@ Markdown(f"""
 """)
 ```
 
+The table says the encrypted fit *arrives* at the centralized answer.
+The trajectory says *how*. Below are the consensus iterates $z^t$ for
+the eight probes with the largest coefficients at convergence, against
+the centralized fit as a horizontal reference — the recorded run keeps
+one row per ADMM sweep, so this is the same run the table summarizes,
+not a second one.
+
+```{python}
+#| label: fig-admm
+#| fig-cap: "Consensus trajectories for the eight largest-magnitude coefficients. Solid lines are the encrypted ADMM iterates; the dashed line is the centralized lasso fit. Standardized scale."
+#| fig-width: 9
+#| fig-height: 4.8
+import matplotlib.pyplot as plt
+import numpy as np
+
+traj = np.asarray(rec["trajectory"])          # (n_iter, K)
+beta_c = np.asarray(rec["beta_centralized"])
+top8 = np.argsort(-np.abs(np.asarray(rec["beta_admm"])))[:8]
+
+fig, axes = plt.subplots(2, 4, figsize=(9, 4.8), constrained_layout=True)
+it = np.arange(1, traj.shape[0] + 1)
+for ax, j in zip(axes.ravel(), top8, strict=True):
+    ax.plot(it, traj[:, j], lw=1.6, color="steelblue")
+    ax.axhline(beta_c[j], ls="--", color="black", lw=1.0)
+    # Position within the screened set, which is what `trajectory`
+    # is indexed by; the screen itself is reported above.
+    ax.set_title(f"screened probe {j + 1}", fontsize=9)
+    ax.tick_params(labelsize=8)
+for ax in axes[-1]:
+    ax.set_xlabel("ADMM iteration", fontsize=9)
+for ax in axes[:, 0]:
+    ax.set_ylabel(r"$z^t$", fontsize=9)
+
+plt.show()
+```
+
+The iterates approach the centralized values and stay there. These are
+the eight coefficients the lasso *kept*, so every panel converges to a
+non-zero reference; the shrinkage the penalty applies elsewhere is in
+the count above, not in this figure.
+
+Two things are worth noticing. The dashed reference is not a target the
+loop was given — the centralized fit is computed separately, as one
+pooled convex program, and the iterates find it. And the encrypted
+averaging step sits inside every one of those iterations, so any
+systematic error it introduced would accumulate along the path rather
+than cancel; the trajectories do not drift.
+
 Reproduce with:
 
 ```bash

@@ -49,6 +49,12 @@ def main() -> None:
         "beta_centralized": np.asarray(
             result.beta_centralized, dtype=float
         ).tolist(),
+        # One row per ADMM sweep, K columns: the consensus iterate after
+        # each encrypted averaging step. The page plots the eight
+        # largest-magnitude coordinates of this against the centralized
+        # fit, which is the only view that shows *how* the split problem
+        # arrives at the pooled answer rather than merely that it does.
+        "trajectory": np.asarray(result.trajectory, dtype=float).tolist(),
     }
     OUT.write_text(json.dumps(payload, indent=2) + "\n")
     print(f"wrote {OUT} after {minutes:.1f} min")

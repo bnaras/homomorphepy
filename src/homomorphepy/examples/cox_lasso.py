@@ -70,6 +70,10 @@ class CoxLassoResult:
     beta_centralized: np.ndarray | None
     beta_admm: np.ndarray | None
     n_iter: int | None
+    # The consensus iterate after every ADMM sweep, so the run can be
+    # plotted as trajectories rather than only as its endpoint. One
+    # row per iteration, K columns; empty when the ADMM was skipped.
+    trajectory: list[np.ndarray]
     context: Context = field(repr=False)
     master: ThresholdMaster = field(repr=False)
 
@@ -205,6 +209,7 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
 
     beta_central = beta_admm = None
     n_iter = None
+    trajectory: list[np.ndarray] = []
 
     if recompute_admm:
         # -- 3a. centralized lasso fit ------------------------------
@@ -255,6 +260,7 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
             primal = float(np.sqrt(np.mean([np.sum((x - z_new) ** 2) for x in site_x])))
             dual = float(RHO * np.linalg.norm(z_new - z_curr))
             z_curr = z_new
+            trajectory.append(z_curr.copy())
             if primal < TOL and dual < TOL:
                 break
         beta_admm = z_curr
@@ -267,6 +273,7 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
         beta_centralized=beta_central,
         beta_admm=beta_admm,
         n_iter=n_iter,
+        trajectory=trajectory,
         context=ctx,
         master=master,
     )
