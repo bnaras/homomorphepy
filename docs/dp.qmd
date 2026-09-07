@@ -1,6 +1,6 @@
 ---
-title: "Differential privacy"
-subtitle: "What it costs to add DP on top"
+title: "Cox regression under differential privacy"
+subtitle: "What it costs to add DP on top of a lossless protocol"
 ---
 
 ```{python}
@@ -221,62 +221,13 @@ enough noise to be meaningful.
 None of this is a defect in the cryptographic protocol. The protocol
 releases exactly what it promises.
 
-## The same mechanism on consensus ADMM
+## A different protocol breaks differently
 
-Everything above concerns an optimizer handed a noisy objective. The
-[consensus ADMM](consensus-admm.qmd) protocol has a different shape —
-there is no objective being probed, only a per-iteration average — and
-what the noise breaks there is different too.
-
-The mechanism is unchanged. Site $i$ adds a draw
-$\mathcal{N}(0, \sigma^2 N)$ to its $x_i + u_i$ vector *before*
-encrypting. The encrypted draws sum under the joint key and the $1/N$
-scaling contracts the variance back to $\sigma^2$ per coordinate, so
-the recovered consensus carries exactly the intended noise and no
-party ever holds the clean value.
-
-**What has to change is the stopping rule.** ADMM normally halts when
-the primal and dual residuals fall below a tolerance. Under noise they
-cannot: each iteration re-injects a fresh draw, so the residuals settle
-onto a floor set by $\sigma$ rather than shrinking towards zero. A
-tolerance test either never fires, or fires because one draw happened
-to land small — which is worse, because it looks like convergence. So
-the loop runs a *fixed* number of iterations instead, taken from the
-noiseless fit on the same cohort.
-
-```{python}
-from homomorphepy.examples.dp import consensus_sweep
-
-rows = consensus_sweep()
-```
-
-```{python}
-#| echo: false
-import pandas as pd
-
-pd.DataFrame({
-    "sigma":            [r.sigma for r in rows],
-    "max|vs noiseless|":[r.max_abs_vs_noiseless for r in rows],
-    "primal residual":  [r.final_primal for r in rows],
-    "dual residual":    [r.final_dual for r in rows],
-})
-```
-
-Two things to read off this table. The coefficient error grows
-*linearly* in $\sigma$ — ten times the noise, ten times the error —
-which is the honest price of the mechanism and is not a surprise.
-
-The residual columns are the interesting ones. They grow linearly too,
-which is the noise floor made visible: at $\sigma = 10^{-2}$ the primal
-residual settles near $2\times10^{-2}$ and simply stays there. Any
-tolerance below that would never be met no matter how long the loop
-ran. That is why the stopping rule is a fixed iteration count and not a
-threshold.
-
-The $\sigma = 0$ row is the control. With the mechanism switched off,
-the fixed-iteration loop lands on the lossless fit to within CKKS
-approximation error, confirming that the change to the stopping rule
-did not itself alter the answer.
+Everything above concerns an optimizer handed a noisy objective, where
+what fails is the *search*. Apply the same mechanism to
+[consensus ADMM](consensus-admm.qmd) and what fails instead is the
+*stopping rule* — a different failure with a different remedy, taken up
+on its own page: [consensus ADMM under DP](consensus-admm-dp.qmd).
 
 ## Reproducing
 

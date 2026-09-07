@@ -1,5 +1,6 @@
 ---
 title: "Distributed Cox regression"
+subtitle: "Stratified partial likelihood over a master/worker protocol"
 ---
 
 ```{python}
@@ -98,8 +99,9 @@ coefficient vector the aggregator broadcasts. This is ordinary
 statistical code — the site never touches an encrypted value.
 
 `ties="efron"` is not optional here. `PHReg` defaults to Breslow's
-method, and on this cohort the two conventions differ by up to 3.56 in
-pooled log-likelihood: a silent wrong answer rather than an error.
+method, and the two conventions differ materially on this cohort — a
+silent wrong answer rather than an error. The size of the disagreement
+is measured at the end of this page.
 
 ```{python}
 from statsmodels.duration.hazard_regression import PHReg
@@ -111,35 +113,51 @@ def local_cox_nll(data, beta):
     return float(-model.loglike(b))
 ```
 
-## Threshold key generation
+## The master/worker protocol
 
-The three sites jointly generate a key. Each keeps a share; the
-aggregator gets only the joint public key and can decrypt nothing on
-its own.
+The master holds a CKKS key pair and broadcasts the current $\beta$.
+Each worker evaluates its own $\ell_s(\beta)$, encrypts it under the
+master's public key, and returns the encrypted value. The master adds
+the encrypted contributions and decrypts only the total.
 
 ```{python}
-from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+from homomorphepy import fhe_context, make_worker, make_ckks_master
 
 cc = fhe_context("CKKS", multiplicative_depth=1, scaling_mod_size=59,
                  first_mod_size=60, batch_size=8)
 
-workers = [ThresholdSite(name, data, local_cox_nll)
+workers = [make_worker(name, data, local_cox_nll)
            for name, data in sites.items()]
 
-aggregator = make_threshold_master("Aggregator", cc, workers)
-aggregator
+master = make_ckks_master("Master", cc, cc.KeyGen())
+master.set_workers(workers)
+master
 ```
 
 The scaling parameters are lifted from the defaults because the summed
-stratified log-likelihood on this cohort has magnitude ~5e2, and CKKS
-precision is relative to the value being encrypted.
+stratified log-likelihood on this cohort is large, and CKKS precision
+is relative to the value being encrypted:
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+
+_ll_scale = abs(sum(local_cox_nll(d, np.zeros(len(COVARIATES)))
+                    for d in sites.values()))
+Markdown(f"The pooled objective at $\\beta = 0$ is "
+         f"about {_ll_scale:.0f} in magnitude.")
+```
+
+The master sees the *sum* of the local contributions and never an
+individual site's value. It can, however, decrypt — it owns the secret
+key. Removing that assumption is what the
+[threshold version](cox-threshold.qmd) of this example does.
 
 ## Running the fit
 
 Every objective evaluation is a full round trip: broadcast $\beta$,
-each site encrypts its local contribution, the aggregator sums the
-encrypted contributions, and the three share holders jointly decrypt
-the total.
+each worker encrypts its local contribution, and the master sums the
+encrypted contributions and decrypts the total.
 
 ```{python}
 from scipy.optimize import minimize
@@ -149,7 +167,7 @@ n_calls = 0
 def encrypted_nll(beta):
     global n_calls
     n_calls += 1
-    value = aggregator.aggregate(np.asarray(beta, dtype=float))
+    value = master.aggregate(np.asarray(beta, dtype=float))
     return 1e12 if (value is None or np.isnan(value)) else float(value)
 
 opt = minimize(encrypted_nll, x0=np.zeros(len(COVARIATES)),
@@ -192,13 +210,11 @@ assert np.max(np.abs(beta_hat - np.asarray(centralized.params))) < 1e-4
 ```{python}
 from homomorphepy.examples import cox
 
-fit = cox.run(backend="threshold")
+fit = cox.run(backend="ckks")
 ```
 
 ```{python}
 #| echo: false
-from IPython.display import Markdown
-
 sizes = " · ".join(f"{k} n={v} ({fit.site_events[k]} events)"
                    for k, v in fit.site_sizes.items())
 rows = "\n".join(
@@ -213,86 +229,71 @@ Markdown(
 )
 ```
 
-## Threshold keys: the trust model
-
-A single-decrypter master is *operationally* convenient — one party
-owns decryption — but it leaves a meaningful piece of the threat model
-unaddressed: the master is trusted not to decrypt anything it
-shouldn't.
-
-Threshold key generation removes that trust. Three sites jointly
-generate a key so that no single party holds the joint secret. The
-master's role is reduced to an aggregator: it sums encrypted
-contributions and orchestrates partial-decryption fan-in, but it
-cannot decrypt anything by itself.
-
-The mathematical content is identical — same data, same fit, same
-coefficients to floating-point precision. Only the trust model
-changes.
-
-### What the aggregator sees, by stage
-
-1. Encrypted local contributions
-   $\mathit{ct}_i = E_{\mathit{pk}_{1..n}}(\ell_i)$. None decryptable
-   alone.
-2. The encrypted sum
-   $\mathit{ct}_{\text{sum}} = \boxplus_i \mathit{ct}_i$. Not
-   decryptable alone.
-3. Partial decryptions $\rho_i$ contributed by each site. Not
-   decryptable individually.
-4. After fusion, the *sum in the clear* $\ell(\beta) = \sum_i \ell_i$.
-   This appears at the aggregator only at this point.
-
-The sites are honest-but-curious among themselves and toward the
-aggregator; the aggregator holds no secret-key material and is *fully
-untrusted*.
-
-## Only the master class changes
-
-The optimizer, the objective, the site functions and the protocol
-runner are identical between the two backends. Swapping the backend
-swaps who can decrypt.
-
-```{python}
-ckks_fit = cox.run(backend="ckks")
-```
-
-```{python}
-#| echo: false
-Markdown(f"""
-| backend | max diff vs centralized | can any single party decrypt? |
-|---|---|---|
-| single-decrypter CKKS | {ckks_fit.max_abs_difference:.1e} | yes, the master |
-| threshold (n-of-n) | {fit.max_abs_difference:.1e} | no |
-""")
-```
-
 The distributed encrypted fit agrees with the aggregated cleartext fit
 to `{python} f"{fit.max_abs_difference:.1e}"`, over
 `{python} fit.n_objective_calls` objective evaluations — each one a
-full encrypt, homomorphic sum, and n-of-n threshold decryption across
-the three sites. Log-likelihood
+full encrypt, homomorphic sum, and decryption. Log-likelihood
 `{python} f"{fit.loglik_encrypted:.6f}"` encrypted against
 `{python} f"{fit.loglik_centralized:.6f}"` centralized.
+
+## What this demonstrates
+
+**A general-purpose optimizer composes with the encrypted channel
+without modification.** `scipy.optimize.minimize` was handed a Python
+callable and never learned that evaluating it involved three parties
+and a public-key cryptosystem. Nothing in the optimizer was patched,
+subclassed, or configured for encryption.
+
+**The additive structure of the stratified partial likelihood is what
+makes this work.** Only a sum crosses the site boundary, and a sum is
+exactly what an additively homomorphic scheme computes. No approximation
+of the likelihood was needed.
+
+**The agreement is at the level of the optimizer's own tolerance**, not
+at the level of the encryption. The gap above is set by `ftol`, not by
+CKKS — the [precision](precision.qmd) page separates the two.
 
 ## Two tie conventions, on purpose
 
 Tied event times admit more than one treatment. Efron's method is the
 usual default in survival software; `statsmodels.PHReg` defaults to
-Breslow's. On this cohort, where follow-up is recorded to a tenth of a
-year across 235 patients, the two differ by up to 3.56 in pooled
-log-likelihood — a silent wrong answer, not an error, if the argument
-is forgotten.
+Breslow's. On this cohort follow-up is recorded to a tenth of a year
+across 235 patients, so ties are common and the conventions disagree:
+
+```{python}
+def pooled_ll(beta, ties):
+    return sum(
+        PHReg(d["time"], d["X"], status=d["status"], ties=ties).loglike(beta)
+        for d in sites.values()
+    )
+
+gap = max(abs(pooled_ll(b, "efron") - pooled_ll(b, "breslow"))
+          for b in (np.zeros(len(COVARIATES)), beta_hat))
+round(gap, 2)
+```
+
+A discrepancy of `{python} f"{gap:.2f}"` in pooled log-likelihood is a
+silent wrong answer, not an error, if the argument is forgotten.
 
 This example passes `ties="efron"`. The [Cox-lasso](cox-lasso.qmd)
 example uses Breslow instead, because its partial likelihood is
 written symbolically for a convex solver and that form *is* Breslow's;
 Efron has no comparable convex-atom formulation.
 
-## Caveat
+## Caveats
 
-A teaching example. Production would want a real communication
-transport, persistent serialization at site boundaries, and — for the
-threshold protocol — a story about what happens when a site is
-unavailable at decryption time, since n-of-n means every site must
-participate.
+**The master can decrypt.** It owns the secret key, so the protocol
+protects the sites from each other and from an eavesdropper, but not
+from the master. It sees only the sum by *construction of the
+protocol*, not by any cryptographic guarantee — a master that chose to
+decrypt an individual contribution could. The
+[threshold version](cox-threshold.qmd) removes that assumption, with no
+change to the statistics.
+
+**The summed log-likelihood is itself informative.** Even an honest
+master learns $\ell(\beta)$ at every point the optimizer visits, which
+is a functional of all the data. Bounding what that discloses is what
+the [differential privacy](dp.qmd) page takes up.
+
+**A teaching example.** Production would want a real communication
+transport and persistent serialization at site boundaries.

@@ -22,6 +22,7 @@ website:
           - text: "---"
           - mle.qmd
           - cox.qmd
+          - cox-threshold.qmd
           - consensus-admm.qmd
           - cox-lasso.qmd
           - text: "---"
@@ -30,6 +31,7 @@ website:
           - similarity.qmd
           - text: "---"
           - dp.qmd
+          - consensus-admm-dp.qmd
       - href: precision.qmd
         text: Precision
 

@@ -135,7 +135,8 @@ unmodified fitting routine.
 | Example | What it shows |
 |---|---|
 | [Maximum likelihood](mle.qmd) | An unmodified optimizer driving an encrypted objective. |
-| [Cox regression](cox.qmd) | Survival analysis across three hospitals, single-decrypter and threshold. |
+| [Cox regression](cox.qmd) | Survival analysis across three hospitals, over a master/worker protocol. |
+| [Cox with threshold keys](cox-threshold.qmd) | The same fit again, with no party able to decrypt alone. |
 | [Consensus ADMM](consensus-admm.qmd) | Convex optimization where only the consensus step is encrypted. |
 | [Cox-lasso](cox-lasso.qmd) | The full pipeline on gene expression: encrypted standardization, screening, and fitting. |
 
@@ -148,11 +149,14 @@ neither willing to reveal theirs.
 | [Encrypted logistic prediction](encrypted-regression.qmd) | The same, with a sigmoid — a non-polynomial function evaluated without decrypting. |
 | [Federated similarity search](similarity.qmd) | Retrieval across sites whose models disagree, under threshold keys and joint rotation keys. |
 
-**Adding differential privacy.**
+**Adding differential privacy.** A demonstration of what it costs, not
+a recommendation to do it. The same mechanism breaks a different part
+of each protocol, which is the reason there are two pages.
 
 | Example | What it shows |
 |---|---|
-| [Differential privacy](dp.qmd) | What it costs to add DP on top — a demonstration, not a recommendation. |
+| [Cox under DP](dp.qmd) | Noise on a scalar objective, and the optimizer that stops working. |
+| [Consensus ADMM under DP](consensus-admm-dp.qmd) | Noise on a consensus vector, and the stopping rule that stops meaning anything. |
 
 [Precision](precision.qmd) explains what "the encrypted answer matches"
 means for each scheme, and when to expect exactness rather than a

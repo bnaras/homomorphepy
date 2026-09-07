@@ -1,0 +1,217 @@
+---
+title: "Consensus ADMM under differential privacy"
+subtitle: "When the noise breaks the stopping rule rather than the search"
+---
+
+```{python}
+#| include: false
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+::: {.callout-important}
+## A demonstration, not a recommendation
+
+The threshold-FHE protocol in [consensus ADMM](consensus-admm.qmd) is
+*lossless*: it releases the exact consensus average and leaks nothing
+else. Differential privacy releases a deliberately corrupted average,
+to bound what repeated releases can reveal. This page shows what that
+costs. It is not advice to add it.
+:::
+
+## Why this is not the Cox page again
+
+[Cox regression under DP](dp.qmd) adds Gaussian noise to a scalar
+objective and watches an optimizer fail. The failure there is in the
+*search*: a finite-difference gradient divides noise by a tiny step,
+the gradient direction becomes meaningless, and the fit collapses to
+its starting point.
+
+Consensus ADMM has a different shape. Nothing is probing an objective.
+The only quantity crossing the site boundary is a per-iteration average
+of the $x_i + u_i$ vectors, and the iteration is a fixed-point
+recursion rather than a search. So the search cannot break — there is
+no search.
+
+What breaks instead is the **stopping rule**, and it breaks in a way
+that is easy to miss because the loop still returns an answer.
+
+## The mechanism
+
+Unchanged from the Cox page in substance. Site $i$ adds a draw
+$\mathcal{N}(0, \sigma^2 N)$ to its $x_i + u_i$ vector *before*
+encrypting. The encrypted draws sum under the joint key and the $1/N$
+scaling contracts the variance back to $\sigma^2$ per coordinate, so
+the recovered consensus carries exactly the intended noise per
+coordinate and no party ever holds the clean value — an aggregator that
+is compromised sees encrypted, already-noised contributions.
+
+The variance bookkeeping is the only thing that differs from the scalar
+case: there the per-site scale is $\sigma/\sqrt{N}$ because the sum of
+$N$ draws is released directly; here it is $\sigma\sqrt{N}$ because the
+sum is *divided by* $N$ before release. Both land the released quantity
+at $\mathcal{N}(0, \sigma^2)$.
+
+## The stopping rule has to change
+
+ADMM normally halts when the primal and dual residuals fall below a
+tolerance. Under noise they cannot. Each iteration re-injects a fresh
+draw, so the residuals do not shrink towards zero — they settle onto a
+floor set by $\sigma$.
+
+A tolerance test against that floor has two outcomes, and both are bad.
+If the tolerance sits below the floor it never fires and the loop runs
+to its iteration cap. If it sits near the floor it fires when one draw
+happens to land small, which is *worse*, because a lucky draw is
+indistinguishable from convergence in the output.
+
+So the loop runs a **fixed** number of iterations instead, taken from
+the noiseless fit on the same cohort. The shared ADMM loop already
+accepts a tolerance argument, so this needs no new code path: passing
+`tol=0.0` disables the early exit and leaves everything else identical.
+
+```{python}
+from homomorphepy.examples.dp import consensus_sweep
+
+rows = consensus_sweep()
+T, rho = rows[0].n_iter, rows[0].rho
+T, rho
+```
+
+`{python} T` iterations at $\rho =$ `{python} rho`, both inherited from
+the lossless fit rather than tuned under noise — tuning them against a
+noisy objective would be the same mistake one level up.
+
+## The sweep
+
+```{python}
+#| echo: false
+import pandas as pd
+
+pd.DataFrame({
+    "sigma":             [r.sigma for r in rows],
+    "max|vs noiseless|": [r.max_abs_vs_noiseless for r in rows],
+    "primal residual":   [r.final_primal for r in rows],
+    "dual residual":     [r.final_dual for r in rows],
+})
+```
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+
+noisy = [r for r in rows if r.sigma > 0]
+err_ratio = noisy[-1].max_abs_vs_noiseless / noisy[0].max_abs_vs_noiseless
+sig_ratio = noisy[-1].sigma / noisy[0].sigma
+res_ratio = noisy[-1].final_primal / noisy[0].final_primal
+Markdown(
+    f"Across the noisy rows, sigma rises {sig_ratio:.0f}-fold, the "
+    f"coefficient error rises {err_ratio:.0f}-fold, and the primal "
+    f"residual rises {res_ratio:.0f}-fold."
+)
+```
+
+The coefficient error grows **linearly** in $\sigma$. That is the
+honest price of the mechanism and it is not a surprise.
+
+The residual columns are the interesting ones. They grow linearly too,
+which is the noise floor made visible. At the largest $\sigma$ the
+primal residual settles at
+`{python} f"{noisy[-1].final_primal:.1e}"` and simply stays there — any
+tolerance below that would never be met no matter how long the loop
+ran. This is the concrete reason the stopping rule is a fixed iteration
+count rather than a threshold, and it is measured rather than argued.
+
+## The $\sigma = 0$ control
+
+```{python}
+#| echo: false
+control = rows[0]
+Markdown(
+    f"At sigma = 0 the fixed-iteration loop lands within "
+    f"{control.max_abs_vs_noiseless:.1e} of the lossless fit, with "
+    f"primal residual {control.final_primal:.1e}."
+)
+```
+
+This row is the control, and it is the reason the rest of the table can
+be read as a statement about privacy. Replacing a convergence test with
+a fixed iteration count is a change to the *algorithm*, and it could
+have moved the answer on its own. With the mechanism switched off it
+does not: the loop reproduces the lossless fit to CKKS approximation
+error. Whatever the other rows show is therefore the noise, not the
+stopping rule.
+
+## The privacy budget
+
+The accounting is the same zero-concentrated DP composition used on the
+[Cox page](dp.qmd), with one structural difference in its favor: the
+number of releases is not set by an optimizer's appetite. ADMM releases
+one consensus vector per iteration, and the iteration count is fixed in
+advance, so the budget is **known before the protocol runs** rather
+than discovered afterwards.
+
+```{python}
+import math
+
+def zcdp_to_epsilon(rho_total, delta=1e-5):
+    return rho_total + 2 * math.sqrt(rho_total * math.log(1 / delta))
+
+def budget(n_releases, sigma, delta=1e-5, sensitivity=1.0):
+    rho_total = n_releases * (sensitivity / sigma) ** 2 / 2
+    return rho_total, zcdp_to_epsilon(rho_total, delta)
+
+pd.DataFrame(
+    [(T, s) + budget(T, s) for s in (r.sigma for r in rows) if s > 0],
+    columns=["releases", "sigma", "rho total", "epsilon at delta=1e-5"],
+)
+```
+
+Sensitivity $\Delta = 1$ is a placeholder, as it is throughout these
+pages. A defensible sensitivity bound for the consensus vector is a
+separate problem: it would need the per-site iterates to be clipped to
+a known radius, which changes the optimization problem being solved and
+is not attempted here.
+
+The $\varepsilon$ values at the usable end of this table are large. That
+is the finding, not a failure of the implementation.
+
+## What this demonstrates
+
+**The same mechanism meets a different protocol and breaks something
+else.** Noise on a scalar objective destroys a search direction; noise
+on a consensus vector destroys a convergence criterion. Knowing that
+DP "costs accuracy" does not tell you which part of your procedure will
+stop working.
+
+**The failure is silent by default.** A residual-based loop under noise
+still returns a coefficient vector, still reports a residual, and still
+looks converged. Nothing raises. The only reason it is visible here is
+that the $\sigma = 0$ control was run alongside it.
+
+**The lossless protocol remains the recommendation.** Threshold FHE
+releases the exact consensus and leaks nothing beyond it. Everything on
+this page is the cost of adding a second, independent privacy notion on
+top of a protocol that did not need it to be correct.
+
+## Limitations
+
+**Fixed $T$ is a blunt instrument.** Taking the iteration count from a
+noiseless fit assumes such a fit is available on comparable data. In a
+deployment where it is not, $T$ has to be chosen a priori, and choosing
+it badly costs either accuracy or budget with no signal to tell you
+which.
+
+**Sensitivity is unbounded without clipping.** See above; this is the
+gap that would have to close first in any real use.
+
+**One cohort, one draw of it.** The mechanism is randomized, so a
+specific coefficient here is not a reproducible quantity. What is
+stable is the behavior: linear error growth, a residual floor at
+$\sigma$, and a $\sigma = 0$ control that reproduces the lossless fit.
+
+**No accounting for the ADMM iterates themselves.** Only the consensus
+releases are counted. A site's own $x_i$ never leaves it, but the dual
+variable it maintains is a function of every consensus it has seen, and
+a full treatment would say so formally.
