@@ -498,7 +498,12 @@ def beta_sweep(
     n_anchor: int = 100,
     seed: int = 20260428,
 ) -> list[dict]:
-    """Recall against drift magnitude, at the two endpoints of the family.
+    """Recall against drift magnitude, across three points of the family.
+
+    The two endpoints -- Procrustes at ``mu = inf`` and least squares at
+    ``mu = 0`` -- plus the near-orthogonal ``mu = 1`` between them, which
+    is what shows that the fall-off is gradual in ``mu`` rather than a
+    step at the endpoint.
 
     Common random numbers across ``mu`` within a replicate: the cohorts
     and the drift *directions* are shared, and only the stretch
@@ -512,13 +517,20 @@ def beta_sweep(
         centers = _unit_rows(rng.normal(size=(cfg["n_phenotypes"], cfg["p"])))
         ident = [np.eye(cfg["p"])] * cfg["n_sites"]
         k = cfg["top_k"]
-        acc = dict(procrustes=0.0, least_squares=0.0, ideal=0.0, unaligned=0.0)
+        acc = dict(
+            procrustes=0.0, near_orthogonal=0.0, least_squares=0.0,
+            ideal=0.0, unaligned=0.0,
+        )
         for _ in range(cfg["n_rep"]):
             w = _world(beta, n_anchor, centers, rng, cfg)
             qp = _embed(cfg["n_query"], centers, rng, cfg["separation"], cfg["noise_sd"])
             acc["ideal"] += fed_recall(qp, w["public_db"], ident, 2, k)
             acc["unaligned"] += fed_recall(qp, w["private_db"], ident, 2, k)
-            for name, mu in (("procrustes", float("inf")), ("least_squares", 0.0)):
+            for name, mu in (
+                ("procrustes", float("inf")),
+                ("near_orthogonal", 1.0),
+                ("least_squares", 0.0),
+            ):
                 a = [fit_adapter_mu(w["anchor"]["z"], h, mu) for h in w["anchor_site"]]
                 acc[name] += fed_recall(qp, w["private_db"], a, 1, k)
         out.append(dict(beta=beta, **{s: v / cfg["n_rep"] for s, v in acc.items()}))

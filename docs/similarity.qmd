@@ -46,49 +46,200 @@ The direction also matters, and it is easy to get backwards: the
 adapter is applied to the *incoming query*, so it must map public
 coordinates to site coordinates. The database stays where it is.
 
+## The synthetic network
+
+Three sites, each with its own fine-tune and its own small cohort. The
+drift is drawn as an exactly orthogonal matrix, which matters for what
+comes next: it means the orthogonal adapter can undo it *exactly*, so
+the comparison at the end can assert equality rather than settle for a
+tolerance. The [sweeps](#does-the-adapter-have-to-be-orthogonal) later
+on this page relax that.
+
 ```{python}
 import numpy as np
-from homomorphepy.examples.similarity import simulate, fit_adapter
+import pandas as pd
+from homomorphepy.examples.similarity import DGP, simulate
 
 anchor_public, sites = simulate()
-adapter = fit_adapter(anchor_public, sites[0]["anchor_site"])
+p = DGP["p"]
 
-# The adapter should reproduce the site's own anchor embeddings from
-# the public ones. This site's fine-tune is an orthogonal drift, so an
-# orthogonal adapter can undo it exactly.
-float(np.max(np.abs(adapter @ anchor_public.T - sites[0]["anchor_site"].T)))
+pd.DataFrame({
+    "site":     [s["name"] for s in sites],
+    "patients": [len(s["database"]) for s in sites],
+    "drift is orthogonal to": [
+        f"{np.max(np.abs(s['drift'].T @ s['drift'] - np.eye(p))):.1e}"
+        for s in sites
+    ],
+})
 ```
 
-## Doing it under encryption
+The public anchor cohort is `{python} anchor_public.shape[0]` embeddings
+of width `{python} p`. Every site embeds those same anchors with its own
+model, which is the only thing the sites hold in common.
 
-The query is encrypted under a joint key held by no one. Two operations
-then have to happen while it stays encrypted, and both are built from
-*rotations* of the encrypted vector's slots.
+## The adapters
 
-**Applying the adapter.** A matrix times an encrypted vector is
-computed from the matrix's generalized diagonals:
-
-$$A\,q \;=\; \sum_{i=0}^{p-1} d_i \odot \mathrm{rot}(q, i).$$
-
-Each term multiplies the encrypted vector by an *unencrypted* diagonal.
-That is cheaper than multiplying two encrypted quantities, and the
-whole product costs a single level of the precision budget.
-
-**The inner product.** Multiplying slot-wise by the site's own
-unencrypted database vector, then folding the slots together by
-repeated rotate-and-add, leaves the similarity in slot 0 — in
-$\log_2 p$ rotations rather than $p$.
-
-Under threshold keys, rotation keys cannot come from a secret key,
-because no secret key exists. They are built by an $n$-of-$n$ ceremony
-that mirrors the one that built the public key:
+Each site fits its own adapter and keeps it. Fitting is a Procrustes
+problem — the orthogonal $A$ minimizing
+$\lVert A Z_{\text{public}}^\top - Z_{\text{site}}^\top\rVert$ — solved
+by an SVD, entirely locally and in the clear.
 
 ```{python}
-#| eval: false
+from homomorphepy.examples.similarity import fit_adapter
+
+for s in sites:
+    s["adapter"] = fit_adapter(anchor_public, s["anchor_site"])
+    # The adapter should reproduce the site's own anchor embeddings
+    # from the public ones.
+    s["anchor_error"] = float(np.max(np.abs(
+        s["adapter"] @ anchor_public.T - s["anchor_site"].T
+    )))
+
+[f"{s['anchor_error']:.1e}" for s in sites]
+```
+
+Reconstruction to floating-point noise, as promised — the drift is
+orthogonal and an orthogonal map inverts it exactly.
+
+## Threshold keys, and rotation keys without a secret key
+
+The querier's vector is encrypted under a joint public key that no
+single party can invert.
+
+```{python}
+from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+from homomorphepy.examples.similarity import CKKS_PARAMS
+
+ctx = fhe_context("CKKS", **CKKS_PARAMS)
+holders = [ThresholdSite(s["name"], None, lambda d, t: 0.0) for s in sites]
+master = make_threshold_master("Aggregator", ctx, holders)
+CKKS_PARAMS
+```
+
+Everything on this page needs one more kind of key. Both operations
+below are built from **rotations** of an encrypted vector's slots, and a
+rotation needs an evaluation key of its own.
+
+In the ordinary single-key setting those are derived from the secret
+key. Under threshold keys there is no secret key to derive them from —
+that is the entire point — so they are built by an $n$-of-$n$ ceremony
+mirroring the one that produced the public key. Each site contributes a
+share of every rotation key in turn:
+
+```{python}
 from homomorphepy.actors import make_joint_rotation_keys
 
 make_joint_rotation_keys(master, range(1, p))
 ```
+
+That is `{python} p - 1` rotation amounts, each requiring a pass around
+all three sites. It happens once, at setup.
+
+```{python}
+from homomorphepy import Ct
+
+# A round trip through one rotation, to show the keys work: rotating by
+# k brings slot k into slot 0.
+ct_probe = master.encrypt(np.arange(p, dtype=float).tolist())
+ct_rot = Ct(ctx.cc.EvalRotate(ct_probe.raw, 3), ctx.cc)
+round(float(np.asarray(master.decrypt(ct_rot, length=p), dtype=float)[0]), 6)
+```
+
+## Applying the adapter under encryption
+
+A matrix times an *encrypted* vector cannot be written as a matrix
+product — there is no encrypted vector to index into. It can be written
+using the matrix's generalized diagonals, $d_i[j] = A[j, (j+i) \bmod p]$:
+
+$$A\,q \;=\; \sum_{i=0}^{p-1} d_i \odot \mathrm{rot}(q, i).$$
+
+Every term multiplies the encrypted vector by an *unencrypted* diagonal.
+That is much cheaper than multiplying two encrypted quantities, and
+because the diagonals never need encrypting the whole product costs a
+single level of the precision budget.
+
+```{python}
+from homomorphepy.examples.similarity import diagonals
+
+def matvec(ct, diags, master):
+    """A q, for encrypted q and an unencrypted A given as diagonals."""
+    cc, codec = master.ctx.cc, master.codec
+    total = None
+    for i, d in enumerate(diags):
+        if not np.any(d):                       # a zero diagonal adds nothing
+            continue
+        rot = ct if i == 0 else Ct(cc.EvalRotate(ct.raw, i), cc)
+        term = Ct(cc.EvalMult(rot.raw, codec.encode(d.tolist())), cc)
+        total = term if total is None else Ct(cc.EvalAdd(total.raw, term.raw), cc)
+    return total
+```
+
+Check it against the cleartext product on a real query:
+
+```{python}
+rng = np.random.default_rng(20260914)
+query = rng.normal(size=p)
+query /= np.linalg.norm(query)
+
+ct_query = master.encrypt(query.tolist())
+ct_mapped = matvec(ct_query, diagonals(sites[0]["adapter"]), master)
+
+got = np.asarray(master.decrypt(ct_mapped, length=p), dtype=float)
+want = sites[0]["adapter"] @ query
+float(np.max(np.abs(got - want)))
+```
+
+The package ships the same routine, so a page that drifts from the
+implementation would show it here as a failed comparison rather than as
+prose that quietly stops being true.
+
+## The inner product, and folding the slots
+
+With the query in the site's coordinates, the similarity against one
+patient is an inner product. Multiplying slot-wise by that patient's
+own unencrypted vector puts the $p$ products in $p$ slots; the sum then
+has to be gathered into one slot.
+
+Doing that by $p$ rotations would be wasteful. Repeated
+rotate-and-add doubles the stride each step and finishes in
+$\log_2 p$ = `{python} int(np.log2(p))` rotations, leaving the total in
+every slot — slot 0 included, which is the one we read.
+
+```{python}
+def slot_sum(ct, p, cc):
+    """Fold every slot into slot 0 in log2(p) rotate-and-add steps."""
+    out, step = ct, 1
+    while step < p:
+        out = Ct(cc.EvalAdd(out.raw, Ct(cc.EvalRotate(out.raw, step), cc).raw), cc)
+        step *= 2
+    return out
+
+patient = sites[0]["database"][0]
+term = Ct(ctx.cc.EvalMult(ct_mapped.raw, master.codec.encode(patient.tolist())),
+          ctx.cc)
+score = np.asarray(master.decrypt(slot_sum(term, p, ctx.cc), length=p),
+                   dtype=float)[0]
+
+float(score), float(want @ patient), abs(float(score) - float(want @ patient))
+```
+
+One encrypted score, agreeing with the cleartext inner product, and at
+no point did any party hold the query in the clear.
+
+## What each party does
+
+Putting the pieces in their places:
+
+**The querier** encrypts its embedding under the joint public key and
+sends it. It learns only the scores that come back.
+
+**Each site** applies its own adapter to the encrypted query with
+`matvec`, then runs the slot-wise multiply and `slot_sum` once per
+patient. Its adapter and its database stay put; only encrypted scores
+leave. Note what it never does: decrypt. It cannot.
+
+**The aggregator** collects the encrypted scores and runs the $n$-of-$n$
+decryption ceremony on each, then sorts. It holds no key share.
 
 ## The whole protocol
 
@@ -139,58 +290,140 @@ agree to $10^{-13}$, so running them through encryption would cost
 hours and change no digit — and what is being asked here is a
 statistical question, not a cryptographic one.
 
+Each point is a federated retrieval over three sites, averaged over
+replicates of forty queries, so the whole set takes long enough that it
+is recorded once by `docs/_recorded/record_similarity_sweeps.py` rather
+than run on every build. The figure below is drawn from that file; no
+value is typed into this page.
+
 ```{python}
-from homomorphepy.examples.similarity import mu_sweep
+import json
+from pathlib import Path
+
 import pandas as pd
 
-s = mu_sweep()
-pd.DataFrame(s["table"]).assign(
-    ideal=s["ideal"], unaligned=s["unaligned"], gram=s["gram"]
+rec = json.loads(Path("_recorded/similarity_sweeps.json").read_text())
+ample, scarce = rec["mu_ample"], rec["mu_scarce"]
+beta_tab = pd.DataFrame(rec["beta_sweep"])
+
+pd.DataFrame(
+    {"mu": ample["mu_labels"], "design 1": ample["d1"],
+     "design 2": ample["d2"], "||AᵀA − I||": ample["aniso"]}
 ).round(3)
+```
+
+```{python}
+#| label: fig-sweeps
+#| fig-cap: "Adapter behavior across the family. Top left: recall against mu at fixed drift, both deployments, with the no-drift ideal, the no-adapter floor, and the convex Gram alternative. Top right: recall against drift magnitude for three members of the family. Bottom left: the same mu sweep when the calibration cohort is smaller than the embedding dimension. Bottom right: how far the fitted adapter departs from an isometry, which is the budget the raw-database deployment spends."
+#| fig-width: 9
+#| fig-height: 7
+import matplotlib.pyplot as plt
+import numpy as np
+
+x = np.arange(len(rec["mu_grid"]))
+k = rec["config"]["top_k"]
+fig, ax = plt.subplots(2, 2, figsize=(9, 7), constrained_layout=True)
+
+# (1) recall vs mu, both deployments, against the three reference lines
+a = ax[0, 0]
+a.plot(x, ample["d1"], "o-", color="black", label="Design 1 (fold)")
+a.plot(x, ample["d2"], "o--", color="firebrick", mfc="none",
+       label="Design 2 (matvec)")
+a.axhline(ample["gram"], ls="-.", lw=2, color="orange", label="Gram-PSD")
+a.axhline(ample["ideal"], ls=":", color="darkgreen", label="ideal")
+a.axhline(ample["unaligned"], ls=":", color="gray", label="unaligned")
+a.set(xticks=x, xticklabels=rec["mu_grid"], ylim=(0, 1),
+      xlabel="μ  (0 = least squares  →  inf = Procrustes)",
+      ylabel=f"recall@{k}", title=f"Recall vs μ (β = {ample['beta']})")
+a.legend(loc="upper right", fontsize=7, frameon=False, ncols=2)
+
+# (2) recall vs drift magnitude, three members of the family
+a = ax[0, 1]
+a.plot(beta_tab["beta"], beta_tab["procrustes"], "o-", color="black",
+       label="Procrustes (μ = inf)")
+a.plot(beta_tab["beta"], beta_tab["near_orthogonal"], "o--", color="blue",
+       mfc="none", label="near-orthogonal (μ = 1)")
+a.plot(beta_tab["beta"], beta_tab["least_squares"], "^:", color="firebrick",
+       mfc="none", label="least squares (μ = 0)")
+# Drawn as a curve, not a horizontal line: the no-drift reference is
+# recomputed at each beta and moves a little with the draw, so
+# flattening it to one number would hide that.
+a.plot(beta_tab["beta"], beta_tab["ideal"], ":", color="darkgreen",
+       label="ideal")
+a.set(ylim=(0, 1), xlabel="β  (non-isometry)", ylabel=f"recall@{k}",
+      title="Procrustes vs relaxed adapters")
+a.legend(loc="lower left", fontsize=7, frameon=False)
+
+# (3) the same sweep under scarce calibration: the sweet spot
+a = ax[1, 0]
+a.plot(x, scarce["d1"], "o-", color="black", label="Design 1 (fold)")
+a.plot(x, scarce["d2"], "o--", color="firebrick", mfc="none",
+       label="Design 2 (matvec)")
+a.set(xticks=x, xticklabels=rec["mu_grid"], ylim=(0, 1), xlabel="μ",
+      ylabel=f"recall@{k}",
+      title=f"Scarce anchor (n = {scarce['n_anchor']} < p = {rec['config']['p']})")
+a.legend(loc="lower left", fontsize=7, frameon=False)
+
+# (4) departure from isometry: the cost Design 2 pays at finite mu
+a = ax[1, 1]
+a.semilogy(x, np.asarray(ample["aniso"]) + 1e-16, "o-", color="black")
+a.set(xticks=x, xticklabels=rec["mu_grid"], xlabel="μ",
+      ylabel=r"$\|A^\top A - I\|_F$", title="Departure from isometry")
+
+plt.show()
+```
+
+Reproduce with:
+
+```bash
+OMP_NUM_THREADS=2 uv run python docs/_recorded/record_similarity_sweeps.py
 ```
 
 Three things fall out.
 
 **Alignment is not optional.** Without an adapter, recall collapses to
-`{python} round(s["unaligned"], 3)` against an achievable
-`{python} round(s["ideal"], 3)` — no better than guessing. The
-geometric obstacle is the whole problem; the encryption is the easy
-part.
+`{python} round(ample["unaligned"], 3)` against an achievable
+`{python} round(ample["ideal"], 3)` — the gray floor in the first
+panel. The geometric obstacle is the whole problem; the encryption is
+the easy part.
 
 **The two deployments coincide only at the orthogonal endpoint.** At
-$\mu = \infty$ the Design 1 and Design 2 columns are identical, exactly
-as the algebra says they must be: an orthogonal map preserves norms, so
-folding it into the database and applying it to the query are the same
+$\mu = \infty$ the two curves in the first panel meet, exactly as the
+algebra says they must: an orthogonal map preserves norms, so folding
+it into the database and applying it to the query are the same
 operation. At finite $\mu$ they separate, and folding wins — because
 the renormalization it performs repairs some of the distortion the
-non-orthogonal map introduces.
+non-orthogonal map introduces. The last panel is the budget being
+spent: $\lVert A^\top A - I\rVert_F$ falls to
+`{python} f"{ample['aniso'][-1]:.0e}"` at the endpoint and rises by
+orders of magnitude as $\mu$ relaxes.
 
-**An intermediate $\mu$ beats both endpoints.** The rigid endpoint
-gives up recall it does not need to; unconstrained least squares
-distorts the geometry more than it repairs. Neither extreme is the
-right default.
+**An intermediate $\mu$ beats both endpoints.** The best point on the
+Design 1 curve is $\mu =$
+`{python} ample["mu_labels"][int(np.argmax(ample["d1"]))]` rather than
+either end. The rigid endpoint gives up recall it does not need to;
+unconstrained least squares distorts the geometry more than it repairs.
+Neither extreme is the right default, and the third panel shows the
+effect sharpening when the calibration cohort is smaller than the
+embedding dimension — there the intermediate $\mu$ is regularizing an
+adapter that least squares cannot determine.
 
-Now vary the drift itself. $\beta$ is the non-isometry magnitude:
-$\beta = 0$ is an exactly orthogonal fine-tune, and larger values
-stretch directions increasingly unevenly.
+The second panel varies the drift itself. $\beta$ is the non-isometry
+magnitude: $\beta = 0$ is an exactly orthogonal fine-tune, and larger
+values stretch directions increasingly unevenly. At $\beta = 0$ the
+orthogonal adapter matches the ideal — it inverts an orthogonal drift
+perfectly, which is the sanity check that the machinery is right. As
+$\beta$ grows the rigid adapter falls away while the relaxed ones hold.
+That is the practical finding: **the more freely a site fine-tunes, the
+more the orthogonality constraint costs you**, and a deployment facing
+genuinely free fine-tuning should not default to Procrustes.
 
-```{python}
-from homomorphepy.examples.similarity import beta_sweep
-
-pd.DataFrame(beta_sweep()).round(3)
-```
-
-At $\beta = 0$ the orthogonal adapter matches the ideal exactly — it
-inverts an orthogonal drift perfectly, which is the sanity check that
-the machinery is right. As $\beta$ grows the rigid adapter falls away
-while the relaxed one holds. That is the practical finding: **the more
-freely a site fine-tunes, the more the orthogonality constraint costs
-you**, and a deployment facing genuinely free fine-tuning should not
-default to Procrustes.
-
-The convex Gram alternative is included in the first table for
-comparison. It is analytic and therefore attractive, and it performs
-close to no alignment at all.
+The convex Gram alternative sits in the first panel for comparison. It
+is analytic and therefore attractive, and it lands at
+`{python} round(ample["gram"], 3)` — essentially the no-alignment
+floor. Its rotation invariance is exactly the problem: it discards the
+orientation of the public frame, which is the one thing a public query
+needs.
 
 ## What this does not do
 
