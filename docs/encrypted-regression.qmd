@@ -1,0 +1,111 @@
+---
+title: "Encrypted logistic prediction"
+---
+
+```{python}
+#| include: false
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+## The use case
+
+[Secure inference](secure-inference.qmd) scored patients with a
+*linear* model. A logistic model needs the sigmoid
+
+$$\sigma(\eta) = \frac{1}{1 + e^{-\eta}},$$
+
+and encrypted arithmetic offers only addition and multiplication, so on
+its face the sigmoid cannot be evaluated at all without decrypting
+first — which would defeat the exercise.
+
+A Chebyshev polynomial approximation closes the gap. The linear
+predictor *and* the sigmoid are evaluated while the data stays
+encrypted, so the researcher never sees a patient and the hospital
+never sees a coefficient.
+
+The scheme is CKKS, since the quantities are real-valued.
+
+## Training, in the clear
+
+The cohort is a shipped fixture rather than a fresh draw, so this page
+and its R counterpart fit the same 500 patients and can be compared
+coefficient by coefficient.
+
+```{python}
+import numpy as np
+from homomorphepy import load_json
+from homomorphepy.examples.encrypted_regression import fit_logistic
+
+fx = load_json("encrypted_regression")
+age = np.asarray(fx["age"], dtype=float)
+biomarker = np.asarray(fx["biomarker"], dtype=float)
+outcome = np.asarray(fx["outcome"], dtype=float)
+
+beta = fit_logistic(age, biomarker, outcome)
+dict(zip(["intercept", "age", "biomarker"], np.round(beta, 4)))
+```
+
+The same fit performed in R is carried in the fixture, so the agreement
+is checkable rather than asserted:
+
+```{python}
+reference = np.asarray(fx["expected"]["beta_fit"], dtype=float)
+float(np.max(np.abs(beta - reference)))
+```
+
+## Scoring under encryption
+
+The whole pipeline is one call. It builds a CKKS context deep enough
+for the polynomial, encrypts a fixed 16-patient panel, evaluates the
+linear predictor and the sigmoid without decrypting, and decrypts only
+the probabilities.
+
+```{python}
+from homomorphepy.examples.encrypted_regression import run
+
+r = run()
+print(f"trained on {r.n_train} patients, scored {r.n_scored}")
+print(f"max error against the cleartext sigmoid: {r.max_error:.2e}")
+```
+
+```{python}
+#| echo: false
+import pandas as pd
+from homomorphepy.examples.encrypted_regression import PANEL_AGE, PANEL_BIOMARKER
+
+pd.DataFrame({
+    "age": PANEL_AGE,
+    "biomarker": PANEL_BIOMARKER,
+    "encrypted": np.round(r.probs_encrypted, 6),
+    "cleartext": np.round(r.probs_cleartext, 6),
+}).head(8)
+```
+
+## What this costs
+
+Depth is the currency. The linear example needed a precision budget of
+2; the Chebyshev polynomial needs 8, because every multiplication in it
+spends one level. That is the whole reason the context above is
+configured differently, and it is the constraint to think about before
+reaching for any non-polynomial function under encryption.
+
+The approximation interval matters just as much. The sigmoid is fitted
+on $[-4, 4]$, which has to cover the range the linear predictor can
+actually reach on the data being scored. Outside that interval a
+Chebyshev fit diverges quickly, and it does so silently — the decrypted
+numbers simply stop being probabilities.
+
+## What this does and does not give you
+
+The transport guarantee is the same as secure inference: patient values
+never appear in the clear outside the hospital, and the coefficients
+never leave the researcher.
+
+The caveat is the same too. The hospital holds the secret key and
+chooses the queries, so it can probe the model and recover its
+parameters. The sigmoid makes the recovery less trivial than solving a
+linear system, but it does not prevent it. Rate limiting, query
+auditing, or output differential privacy are what address that;
+encryption is not.

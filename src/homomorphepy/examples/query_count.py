@@ -1,15 +1,15 @@
 """Distributed query count under threshold BFV.
 
 Several sites each hold a private table of patient records. A
-coordinator wants the answer to one aggregate query -- how many
+aggregator wants the answer to one aggregate query -- how many
 patients across all sites satisfy some condition -- without any site
-revealing its records and without the coordinator learning any
+revealing its records and without the aggregator learning any
 individual site's count.
 
 The query travels as a string and is evaluated at each site with
 :meth:`pandas.DataFrame.query`, so the predicate is a parameter of the
 protocol rather than something baked into the site function. The
-coordinator broadcasts it; each site answers with an encrypted count.
+aggregator broadcasts it; each site answers with an encrypted count.
 
 The cohort is simulated, so there is no external truth to match: the
 claim is that the encrypted protocol reproduces the pooled cleartext
@@ -88,7 +88,7 @@ def run(seed: int = 130, query: str = QUERY) -> QueryCountResult:
     ]
     # Chained key generation: every site ends up with its own share and
     # the master with only the joint public key.
-    master = make_threshold_master("Coordinator", ctx, sites)
+    master = make_threshold_master("Aggregator", ctx, sites)
 
     total = master.aggregate(query)
     per_site = [count_fn(rows, query) for rows in site_data]

@@ -12,15 +12,23 @@ website:
     left:
       - href: index.qmd
         text: Home
+      # Grouped by what the reader is trying to do, not by scheme.
+      # Order matches the Examples section of index.qmd; keep the two
+      # in step.
       - text: Examples
         menu:
           - aggregation.qmd
           - query-count.qmd
+          - text: "---"
           - mle.qmd
-          - secure-inference.qmd
           - cox.qmd
           - consensus-admm.qmd
           - cox-lasso.qmd
+          - text: "---"
+          - secure-inference.qmd
+          - encrypted-regression.qmd
+          - similarity.qmd
+          - text: "---"
           - dp.qmd
       - href: precision.qmd
         text: Precision

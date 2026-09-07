@@ -95,7 +95,7 @@ list(sites)
 
 Each site evaluates its own Cox partial log-likelihood at the
 coefficient vector the aggregator broadcasts. This is ordinary
-statistical code — the site never touches a ciphertext.
+statistical code — the site never touches an encrypted value.
 
 `ties="efron"` is not optional here. `PHReg` defaults to Breslow's
 method, and on this cohort the two conventions differ by up to 3.56 in
@@ -138,7 +138,8 @@ precision is relative to the value being encrypted.
 
 Every objective evaluation is a full round trip: broadcast $\beta$,
 each site encrypts its local contribution, the aggregator sums the
-ciphertexts, and the three share holders jointly decrypt the total.
+encrypted contributions, and the three share holders jointly decrypt
+the total.
 
 ```{python}
 from scipy.optimize import minimize
@@ -239,7 +240,7 @@ changes.
    decryptable alone.
 3. Partial decryptions $\rho_i$ contributed by each site. Not
    decryptable individually.
-4. After fusion, the *plaintext sum* $\ell(\beta) = \sum_i \ell_i$.
+4. After fusion, the *sum in the clear* $\ell(\beta) = \sum_i \ell_i$.
    This appears at the aggregator only at this point.
 
 The sites are honest-but-curious among themselves and toward the

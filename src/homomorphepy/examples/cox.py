@@ -111,7 +111,7 @@ def _site_frames() -> dict[str, dict[str, np.ndarray]]:
 def local_cox_nll(data: dict[str, np.ndarray], beta: Any) -> float:
     """One site's negative Cox partial log-likelihood at ``beta``.
 
-    Plain statistical code that never touches a ciphertext. Returns
+    Plain statistical code that never touches an encrypted value. Returns
     NaN when the local computation fails, which the master propagates
     as a non-evaluable parameter.
     """

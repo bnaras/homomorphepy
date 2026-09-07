@@ -12,7 +12,7 @@ The mechanism
 Gaussian: release ``f(D) + N(0, sigma^2)``. Each of the N sites adds
 ``N(0, sigma^2/N)`` to its own contribution, so the sum carries
 ``N(0, sigma^2)`` exactly. Nobody holds the noiseless value at any
-point -- an aggregator that is compromised sees ciphertexts of
+point -- an aggregator that is compromised sees encrypted
 *already noised* contributions.
 
 Accounting is zCDP (Bun & Steinke 2016): a Gaussian release is
@@ -91,6 +91,7 @@ search collapses before gradient-free search does.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -98,6 +99,7 @@ from scipy.optimize import minimize
 
 from homomorphepy.actors import ThresholdSite, make_threshold_master
 from homomorphepy.context import Context, fhe_context
+from homomorphepy.examples import consensus_admm as _ca
 from homomorphepy.examples.cox import CKKS_PARAMS, COVARIATES, local_cox_nll
 from homomorphepy.examples.cox import _site_frames as _cox_sites
 
@@ -105,9 +107,12 @@ __all__ = [
     "DEFAULT_DELTA",
     "SENSITIVITY",
     "DPFit",
+    "DPConsensusFit",
     "amplification_factor",
     "budget",
     "compare_optimizers",
+    "consensus_at_sigma",
+    "consensus_sweep",
     "fit_at_sigma",
     "sweep",
     "zcdp_to_epsilon",
@@ -273,6 +278,130 @@ def compare_optimizers(sigma: float = 1e-4, seed: int = 1) -> dict[str, DPFit]:
         "BFGS": fit_at_sigma(sigma, method="BFGS", seed=seed),
         "Nelder-Mead": fit_at_sigma(sigma, method="Nelder-Mead", seed=seed),
     }
+
+
+# ---------------------------------------------------------------------
+# The same mechanism on consensus ADMM, where what breaks is different
+# ---------------------------------------------------------------------
+
+
+@dataclass
+class DPConsensusFit:
+    sigma: float
+    beta: np.ndarray
+    beta_noiseless: np.ndarray
+    beta_centralized: np.ndarray
+    max_abs_vs_noiseless: float
+    max_abs_vs_centralized: float
+    final_primal: float
+    final_dual: float
+    n_iter: int
+    rho: float
+
+
+def _consensus_setup(seed: int):
+    """Pick rho and the iteration count from a noiseless run in the clear.
+
+    The DP loop needs a *fixed* number of iterations, and this is where
+    that number comes from: whatever the lossless protocol needed at the
+    best rho on the same cohort.
+    """
+    cohort = _ca.simulate(seed)
+    p, N, lam = _ca.DGP["p"], len(cohort), _ca.DGP["lam"]
+    tol, max_iter = _ca.DGP["tol"], _ca.DGP["max_iter"]
+
+    def build(rho):
+        return [
+            _ca.ConsensusSite(f"Site {i + 1}", X, y, rho, lam, N)
+            for i, (X, y) in enumerate(cohort)
+        ]
+
+    def plain_consensus(sites):
+        return sum(s.x_curr + s.u_curr for s in sites) / len(sites)
+
+    best_rho, best_k = None, None
+    for rho in _ca.DGP["rho_grid"]:
+        _, k, _ = _ca._admm_loop(build(rho), p, rho, max_iter, tol, plain_consensus)
+        if k < max_iter and (best_k is None or k < best_k):
+            best_rho, best_k = float(rho), k
+    if best_rho is None:
+        raise RuntimeError("no rho in the grid converged")
+
+    beta_noiseless, _, _ = _ca._admm_loop(
+        build(best_rho), p, best_rho, max_iter, tol, plain_consensus
+    )
+    return cohort, build, p, N, best_rho, best_k, beta_noiseless
+
+
+def consensus_at_sigma(sigma: float, seed: int = 98765) -> DPConsensusFit:
+    """Run consensus ADMM with per-site Gaussian noise on the consensus.
+
+    Each site adds ``N(0, sigma^2 * N)`` to its ``x + u`` vector
+    *before* encrypting. The encrypted draws sum under the joint key and
+    the ``1/N`` scaling contracts the variance back to ``sigma^2`` per
+    coordinate, so the recovered consensus carries exactly the intended
+    noise and no party ever holds the clean value.
+
+    **The stopping rule has to change.** Residual-based convergence is
+    meaningless here: the residuals cannot fall below the per-iteration
+    noise floor, so a tolerance test either never fires or fires on an
+    accident of the draw. The loop instead runs a fixed number of
+    iterations, taken from the noiseless fit on the same cohort. Passing
+    ``tol=0.0`` disables the early exit without touching the shared loop.
+    """
+    cohort, build, p, N, rho, T, beta_noiseless = _consensus_setup(seed)
+
+    ctx = fhe_context("CKKS", **_ca.CKKS_PARAMS)
+    key_holders = [
+        ThresholdSite(f"Site {i + 1}", None, lambda d, t: 0.0) for i in range(N)
+    ]
+    master = make_threshold_master("Aggregator", ctx, key_holders)
+    rng = np.random.default_rng(seed + 1)
+
+    def noised_encrypted_consensus(sites):
+        cts = []
+        for s in sites:
+            draw = rng.normal(0.0, sigma * np.sqrt(N), size=p) if sigma > 0 else 0.0
+            cts.append(master.encrypt(s.x_curr + s.u_curr + draw))
+        ct_avg = sum(cts) * (1.0 / len(sites))
+        return np.asarray(master.decrypt(ct_avg, length=p), dtype=float)
+
+    sites = build(rho)
+    beta, n_iter, _ = _ca._admm_loop(
+        sites, p, rho, T, 0.0, noised_encrypted_consensus
+    )
+
+    # Report the residuals the loop deliberately stopped consulting, so
+    # the noise floor is visible rather than merely asserted.
+    primal = float(np.sqrt(np.mean([np.sum((s.x_curr - beta) ** 2) for s in sites])))
+    dual = float(np.sqrt(len(sites)) * rho * np.linalg.norm(sites[0].x_curr - beta))
+
+    beta_central = _ca._centralized(cohort, _ca.DGP["lam"])
+    return DPConsensusFit(
+        sigma=float(sigma),
+        beta=beta,
+        beta_noiseless=beta_noiseless,
+        beta_centralized=beta_central,
+        max_abs_vs_noiseless=float(np.max(np.abs(beta - beta_noiseless))),
+        max_abs_vs_centralized=float(np.max(np.abs(beta - beta_central))),
+        final_primal=primal,
+        final_dual=dual,
+        n_iter=n_iter,
+        rho=rho,
+    )
+
+
+def consensus_sweep(
+    sigmas: Sequence[float] = (0.0, 1e-4, 1e-3, 1e-2),
+    seed: int = 98765,
+) -> list[DPConsensusFit]:
+    """``consensus_at_sigma`` across a range, sigma = 0 first.
+
+    The ``sigma = 0`` row is the control: with the mechanism switched
+    off, the fixed-iteration loop must land on the lossless fit. If it
+    does not, the discrepancy is the protocol, not the privacy.
+    """
+    return [consensus_at_sigma(s, seed=seed) for s in sigmas]
 
 
 if __name__ == "__main__":  # pragma: no cover

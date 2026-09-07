@@ -46,7 +46,8 @@ consensus average
 $$z^{k+1} = \frac{1}{N}\sum_i \left(x_i^{k+1} + u_i^k\right)$$
 
 and that travels encrypted. Each site packs its coefficient vector
-into one ciphertext under the joint public key, the aggregator sums
+into the slots of one encrypted value under the joint public key, the
+aggregator sums
 them and scales by $1/N$ *under encryption*, and the sites jointly
 decrypt the result.
 

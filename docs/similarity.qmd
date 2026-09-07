@@ -1,0 +1,220 @@
+---
+title: "Federated similarity search"
+---
+
+```{python}
+#| include: false
+import os
+
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+```
+
+## The use case
+
+A clinician has an unusual case and wants to ask a network of hospitals
+whether anyone has seen patients like it. Each hospital holds
+embeddings of its own patients, produced by a model it fine-tuned
+privately. Nobody will share embeddings, and nobody will share a model.
+
+There are two obstacles, and only one of them is cryptographic.
+
+The **geometric** obstacle: embeddings from different fine-tunes do not
+live in a shared space. An inner product between a query from the
+public base model and a hospital's privately fine-tuned embedding is
+not a similarity — it is a comparison between two different coordinate
+systems.
+
+The **cryptographic** obstacle: the query must not be readable by any
+hospital, the databases must not be readable by anyone, and no single
+party may be able to decrypt.
+
+## The adapter
+
+Each site fixes the geometry locally. A public *anchor cohort* is
+published; each site embeds it with its own fine-tuned model, and then
+fits the orthogonal map that best carries the public geometry onto its
+own. That map is the site's **compatibility adapter**, and it never
+leaves the site.
+
+Orthogonality is doing real work here. An orthogonal map preserves
+inner products, so moving the query into a site's coordinates leaves
+the similarity unchanged. A general linear map would stretch some
+directions and shrink others, and the number that came back would no
+longer be a cosine.
+
+The direction also matters, and it is easy to get backwards: the
+adapter is applied to the *incoming query*, so it must map public
+coordinates to site coordinates. The database stays where it is.
+
+```{python}
+import numpy as np
+from homomorphepy.examples.similarity import simulate, fit_adapter
+
+anchor_public, sites = simulate()
+adapter = fit_adapter(anchor_public, sites[0]["anchor_site"])
+
+# The adapter should reproduce the site's own anchor embeddings from
+# the public ones. This site's fine-tune is an orthogonal drift, so an
+# orthogonal adapter can undo it exactly.
+float(np.max(np.abs(adapter @ anchor_public.T - sites[0]["anchor_site"].T)))
+```
+
+## Doing it under encryption
+
+The query is encrypted under a joint key held by no one. Two operations
+then have to happen while it stays encrypted, and both are built from
+*rotations* of the encrypted vector's slots.
+
+**Applying the adapter.** A matrix times an encrypted vector is
+computed from the matrix's generalized diagonals:
+
+$$A\,q \;=\; \sum_{i=0}^{p-1} d_i \odot \mathrm{rot}(q, i).$$
+
+Each term multiplies the encrypted vector by an *unencrypted* diagonal.
+That is cheaper than multiplying two encrypted quantities, and the
+whole product costs a single level of the precision budget.
+
+**The inner product.** Multiplying slot-wise by the site's own
+unencrypted database vector, then folding the slots together by
+repeated rotate-and-add, leaves the similarity in slot 0 — in
+$\log_2 p$ rotations rather than $p$.
+
+Under threshold keys, rotation keys cannot come from a secret key,
+because no secret key exists. They are built by an $n$-of-$n$ ceremony
+that mirrors the one that built the public key:
+
+```{python}
+#| eval: false
+from homomorphepy.actors import make_joint_rotation_keys
+
+make_joint_rotation_keys(master, range(1, p))
+```
+
+## The whole protocol
+
+```{python}
+from homomorphepy.examples.similarity import run
+
+r = run()
+print(f"{r.n_candidates} candidates across 3 sites, embedding width {r.p}")
+for name, i, score in r.top_k:
+    print(f"  {name} patient {i}: {score:.6f}")
+```
+
+Nothing above was decrypted except the final scores, and those only
+through the $n$-of-$n$ ceremony. The aggregator saw encrypted values
+throughout.
+
+## Does it give the right answer?
+
+The protocol is only worth anything if it returns what the same search
+would have returned in the clear.
+
+```{python}
+print(f"max score error vs cleartext : {r.max_abs_score_error:.2e}")
+print(f"identical ranking            : {r.rank_agreement}")
+```
+
+The scores agree to CKKS approximation error, and the ranking — which
+is what a user actually consumes — is identical.
+
+## Does the adapter have to be orthogonal?
+
+Everything above runs at the orthogonal endpoint, where the adapter
+inverts the drift exactly and the score is a true cosine. But real
+fine-tuning is not orthogonal. A site that trains freely stretches some
+directions more than others, and no rotation can undo that.
+
+So relax the constraint. Fit the adapter by minimizing
+
+$$\lVert Z_{\text{site}} A - Z_{\text{public}}\rVert^2
+  \;+\; \mu \lVert A^\top A - I\rVert^2,$$
+
+where $\mu \to \infty$ forces orthogonality (the Procrustes solution
+used above), $\mu = 0$ is unconstrained least squares, and values in
+between give near-orthogonal maps.
+
+These sweeps run **in the clear**. The encrypted and unencrypted scores
+agree to $10^{-13}$, so running them through encryption would cost
+hours and change no digit — and what is being asked here is a
+statistical question, not a cryptographic one.
+
+```{python}
+from homomorphepy.examples.similarity import mu_sweep
+import pandas as pd
+
+s = mu_sweep()
+pd.DataFrame(s["table"]).assign(
+    ideal=s["ideal"], unaligned=s["unaligned"], gram=s["gram"]
+).round(3)
+```
+
+Three things fall out.
+
+**Alignment is not optional.** Without an adapter, recall collapses to
+`{python} round(s["unaligned"], 3)` against an achievable
+`{python} round(s["ideal"], 3)` — no better than guessing. The
+geometric obstacle is the whole problem; the encryption is the easy
+part.
+
+**The two deployments coincide only at the orthogonal endpoint.** At
+$\mu = \infty$ the Design 1 and Design 2 columns are identical, exactly
+as the algebra says they must be: an orthogonal map preserves norms, so
+folding it into the database and applying it to the query are the same
+operation. At finite $\mu$ they separate, and folding wins — because
+the renormalization it performs repairs some of the distortion the
+non-orthogonal map introduces.
+
+**An intermediate $\mu$ beats both endpoints.** The rigid endpoint
+gives up recall it does not need to; unconstrained least squares
+distorts the geometry more than it repairs. Neither extreme is the
+right default.
+
+Now vary the drift itself. $\beta$ is the non-isometry magnitude:
+$\beta = 0$ is an exactly orthogonal fine-tune, and larger values
+stretch directions increasingly unevenly.
+
+```{python}
+from homomorphepy.examples.similarity import beta_sweep
+
+pd.DataFrame(beta_sweep()).round(3)
+```
+
+At $\beta = 0$ the orthogonal adapter matches the ideal exactly — it
+inverts an orthogonal drift perfectly, which is the sanity check that
+the machinery is right. As $\beta$ grows the rigid adapter falls away
+while the relaxed one holds. That is the practical finding: **the more
+freely a site fine-tunes, the more the orthogonality constraint costs
+you**, and a deployment facing genuinely free fine-tuning should not
+default to Procrustes.
+
+The convex Gram alternative is included in the first table for
+comparison. It is analytic and therefore attractive, and it performs
+close to no alignment at all.
+
+## What this does not do
+
+**Top-$k$ selection happens in the clear.** The aggregator decrypts
+every candidate score and then sorts. Selecting the top $k$ *under*
+encryption is possible in CKKS via polynomial sign approximation, but
+it costs depth and complexity out of proportion to what it adds here.
+The consequence is that the aggregator learns every score, not only the
+$k$ it returns.
+
+**Patient indices travel in the clear** alongside the encrypted scores,
+so the aggregator learns which site holds a match and at which local
+position, though not who that patient is.
+
+**Repeated adaptive queries leak.** A querier who submits many chosen
+embeddings learns about the shape of the cohort. That is a property of
+any retrieval system that returns real answers, and encryption does not
+address it; query budgets do.
+
+**The trust model is honest-but-curious.** A site that misreports its
+scores can corrupt the ranking undetected. Catching that needs
+verifiable computation, which this does not attempt.
+
+**One encrypted value per patient.** At this scale that is fine. A
+production deployment would pack many patients into the slots of a
+single encrypted value and amortize both the adapter and the reduction
+across them.

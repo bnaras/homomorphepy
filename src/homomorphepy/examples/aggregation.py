@@ -4,8 +4,8 @@ The simplest composition with FHE, and the one to read first.
 
 Three sites each hold a patient cohort. Each counts locally how many of
 its patients match a query, encrypts that single integer under the
-coordinator's public key, and sends the ciphertext. The coordinator
-adds the ciphertexts homomorphically and decrypts only the total. It
+aggregator's public key, and sends the encrypted count. The aggregator
+adds those encrypted counts and decrypts only the total. It
 never sees a per-site count.
 
 Unlike the other examples this one calls the encryption primitives
@@ -16,8 +16,8 @@ what it is teaching.
 BFV is used rather than CKKS because counts are integers and BFV is
 exact: the recovered total is the integer, not an approximation of it.
 
-The coordinator here is a single decrypter -- it holds the secret key
-and could in principle decrypt an individual site's ciphertext if one
+The aggregator here is a single decrypter -- it holds the secret key
+and could in principle decrypt an individual site's contribution if one
 were sent alone. :mod:`.query_count` runs the same computation under
 threshold keys, where no single party can decrypt at all; the contrast
 between the two is the point.
@@ -79,7 +79,7 @@ def run(seed: int = 42, query: str = QUERY) -> AggregationResult:
     """Run the single-decrypter aggregation over simulated cohorts."""
     site_data = simulate(seed)
 
-    # The coordinator sets up the context and keys, and distributes the
+    # The aggregator sets up the context and keys, and distributes the
     # public key. In a deployment the serialized context travels too;
     # here one process stands in for all parties.
     ctx = fhe_context(
@@ -88,14 +88,14 @@ def run(seed: int = 42, query: str = QUERY) -> AggregationResult:
     keys = ctx.KeyGen()
     codec = packed_codec(ctx)
 
-    # Each site encrypts one integer under the coordinator's public key.
+    # Each site encrypts one integer under the aggregator's public key.
     per_site = [site_count(rows, query) for rows in site_data]
     ciphertexts = [
         Ct(ctx.Encrypt(keys.publicKey, codec.encode(count)), ctx.cc)
         for count in per_site
     ]
 
-    # The coordinator adds without decrypting anything intermediate.
+    # The aggregator adds without decrypting anything intermediate.
     total_ct = sum(ciphertexts)
 
     pt = ctx.Decrypt(total_ct.raw, keys.secretKey)
@@ -114,7 +114,7 @@ if __name__ == "__main__":  # pragma: no cover
     r = run()
     print(f"site sizes        : {r.site_sizes}")
     print(
-        f"per-site counts   : {r.per_site_cleartext}  (never seen by the coordinator)"
+        f"per-site counts   : {r.per_site_cleartext}  (never seen by the aggregator)"
     )
     print(f"encrypted total   : {r.total_encrypted}")
     print(f"cleartext total   : {r.total_cleartext}")

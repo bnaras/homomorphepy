@@ -25,8 +25,8 @@ tolerance there would be hiding a bug rather than accommodating one.
 ## Approximate, for CKKS
 
 CKKS encrypts real numbers and trades exactness for that ability.
-Results carry an approximation error which grows with circuit depth
-and shrinks with the scaling factor. In practice, at the depths these
+Results carry an approximation error which grows with the depth of
+the computation and shrinks with the scaling factor. In practice, at the depths these
 examples use:
 
 ```{python}
@@ -127,7 +127,7 @@ is a category mistake.
 
 **Differentially private runs.** [DP](dp.qmd) draws fresh noise on
 every query, so two runs of the same code on the same data disagree.
-Only distributional behaviour is comparable — the ordering of
+Only distributional behavior is comparable — the ordering of
 optimizers under noise, the shape of the degradation as σ grows.
 
 **Iteration counts.** A loop that stops when a residual first falls

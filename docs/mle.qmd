@@ -43,7 +43,7 @@ float(fit0.x[0]), float(np.mean(y))
 
 Now suppose the same data is **distributed across three sites** — say,
 three hospitals counting adverse events. None will share its raw
-counts with the others or with a central coordinator, but they are
+counts with the others or with a central aggregator, but they are
 willing to *jointly* compute the same MLE provided no party learns
 anything about another party's contribution.
 
@@ -101,7 +101,8 @@ Paillier, the classic additively homomorphic scheme, is purely
 *additive*. Real-valued log-likelihoods had to be split into integer and
 fractional parts and rationally approximated with a denominator of
 $2^{256}$. CKKS encrypts real numbers natively and the protocol
-becomes much cleaner: each step is just `+` between two ciphertexts.
+becomes much cleaner: each step is just `+` between two encrypted
+values.
 CKKS also supports multiplication, which the Cox example needs.
 
 ## Implementation
@@ -114,8 +115,8 @@ encryption and decryption through CKKS. The worker class and the
 `aggregate()` runner are backend-agnostic.
 
 The per-site negative log-likelihood is the same plain numeric
-function it would be in the cleartext case — the site never touches a
-ciphertext.
+function it would be in the cleartext case — the site never touches an
+encrypted value.
 
 ```{python}
 def local_nll(data, lam):

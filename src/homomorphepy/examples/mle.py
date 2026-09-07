@@ -38,7 +38,7 @@ at these parameters is far more precise than one might assume --
 1e-13 absolute on a value of 100 is essentially float64 precision.
 
 :data:`FINITE_DIFF_STEP` widens the step anyway, since it is
-marginally more accurate, but it is not load-bearing. A deeper circuit
+marginally more accurate, but it is not load-bearing. A deeper computation
 with a larger scaling factor could change the balance, so
 ``tests/test_examples.py`` records the measurement and will flag it if
 the two settings ever stop agreeing. The step *does* become
@@ -108,7 +108,7 @@ def local_nll(data: Sequence[int], lam: float) -> float:
     """Negative Poisson log-likelihood of one site's counts.
 
     Plain numeric code, exactly as it would be written without any
-    encryption -- the site never sees a ciphertext.
+    encryption -- the site never sees an encrypted value.
     """
     lam = float(np.ravel(lam)[0])
     if lam <= 0:

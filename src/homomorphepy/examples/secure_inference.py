@@ -3,10 +3,10 @@
 A hospital holds
 patient biomarkers; a lab holds a proprietary linear risk model. The
 hospital encrypts, the lab evaluates its model homomorphically on the
-ciphertexts, and the hospital decrypts the scores.
+encrypted values, and the hospital decrypts the scores.
 
-Unlike the other examples in this tier, the data is packed in SIMD
-layout: one ciphertext per biomarker, with the eight patients in the
+Unlike the other examples in this tier, the data is packed across
+slots: one encrypted value per biomarker, with the eight patients in the
 slots. So the whole cohort is scored in four multiply-adds rather than
 eight separate evaluations -- the arrangement that makes CKKS practical
 for this shape of problem.
@@ -90,7 +90,7 @@ def run() -> InferenceResult:
     ctx.EvalMultKeyGen(keys.secretKey)
     codec = packed_codec(ctx)
 
-    # One ciphertext per biomarker, patients across the slots.
+    # One encrypted value per biomarker, patients across the slots.
     cts = [
         Ct(ctx.Encrypt(keys.publicKey, codec.encode(values)), ctx.cc)
         for values in biomarkers

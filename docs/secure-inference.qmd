@@ -18,8 +18,9 @@ not want to send its model coefficients to the hospital in cleartext
 either.
 
 With FHE the hospital encrypts patient biomarkers, sends the
-ciphertexts to the lab, the lab applies its weighted-sum scoring
-directly on ciphertexts, and the hospital decrypts the scores. The
+encrypted values to the lab, the lab applies its weighted-sum scoring
+to them while they stay encrypted, and the hospital decrypts the
+scores. The
 biomarker values never appear in cleartext on the lab's machine, and
 the lab's coefficients are never sent to the hospital. These are the
 *transport* guarantees and they are what the pipeline below
@@ -44,8 +45,8 @@ coefficients.
 ## Hospital side: encrypt the biomarkers
 
 Eight patients, each with four biomarker values. We pack each biomarker
-*across patients* — one ciphertext per biomarker, with patient values
-in the slots.
+*across patients* — one encrypted value per biomarker, with patient
+values in the slots.
 
 ```{python}
 from homomorphepy import fhe_context, packed_codec, Ct
@@ -69,8 +70,8 @@ ct1, ct2, ct3, ct4 = (
 
 ## Lab side: evaluate the model without decrypting
 
-The lab's weights never leave the lab, and the ciphertexts it receives
-are opaque to it. The scoring expression reads exactly as it would in
+The lab's weights never leave the lab, and the encrypted values it
+receives are opaque to it. The scoring expression reads exactly as it would in
 the clear — that is what the operator wrapper buys:
 
 ```{python}
@@ -120,10 +121,11 @@ assert max_error < 1e-6
 ## Packing
 
 All eight patients are scored in four multiply-adds rather than eight
-separate evaluations. Each ciphertext holds *one biomarker across all
-patients* in its slots, so a single homomorphic multiply scales that
-biomarker for everyone at once. This SIMD layout is what makes CKKS
-practical for problems of this shape.
+separate evaluations. Each encrypted value holds *one biomarker across
+all patients* in its slots, and one arithmetic operation acts on every
+slot at once, so a single multiply scales that biomarker for everyone
+simultaneously. That layout is what makes CKKS practical for problems
+of this shape.
 
 ## The same run, in one call
 
@@ -184,7 +186,7 @@ Markdown(f"""
 The coefficients come back to
 `{python} f"{attack['max_weight_error']:.0e}"`. Encryption is
 irrelevant to this attack, which is exactly the point: it operates on
-the *input-output behaviour* the protocol is designed to provide.
+the *input-output behavior* the protocol is designed to provide.
 
 The defenses are rate limiting, query auditing, or a model whose
 structure resists inversion — not more cryptography.

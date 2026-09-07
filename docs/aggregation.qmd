@@ -14,7 +14,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 Multiple research sites each hold patient data and want to know the
 *total count* of patients matching a criterion (say `age < 50` and
 `sex == "F"` and `biomarker < 0.2`) without revealing the individual
-per-site counts to anyone, including the coordinator running the
+per-site counts to anyone, including the aggregator running the
 aggregation.
 
 We use OpenFHE's **BFV** scheme. BFV operates on *integer vectors*
@@ -49,7 +49,7 @@ site_data = [
 site_data[0].head()
 ```
 
-## The coordinator sets up encryption
+## The aggregator sets up encryption
 
 ```{python}
 from homomorphepy import fhe_context, packed_codec
@@ -63,9 +63,9 @@ pk, sk = keys.publicKey, keys.secretKey
 codec = packed_codec(cc)
 ```
 
-In a real deployment the coordinator distributes the public key (and
+In a real deployment the aggregator distributes the public key (and
 the serialized context) to each site. The secret key stays with the
-coordinator. We simulate this in one process by sharing `cc` and `pk`
+aggregator. We simulate this in one process by sharing `cc` and `pk`
 locally.
 
 ## Each site computes locally and encrypts
@@ -87,16 +87,16 @@ ct_site3 = site_encrypt(site_data[2], cc, pk)
 ct_site1
 ```
 
-These ciphertexts are opaque to the coordinator — it learns nothing
-about individual site counts.
+These encrypted counts are opaque to the aggregator — it learns
+nothing about any individual site's count.
 
-## The coordinator aggregates
+## The aggregator aggregates
 
 ```{python}
-# Homomorphic addition: the coordinator never decrypts intermediates.
+# Homomorphic addition: the aggregator never decrypts intermediates.
 ct_total = ct_site1 + ct_site2 + ct_site3
 
-# Only the coordinator holds the secret key.
+# Only the aggregator holds the secret key.
 result = cc.Decrypt(ct_total.raw, sk)
 total_count = codec.decode(result, 1)[0]
 total_count
@@ -115,7 +115,7 @@ assert total_count == true_count
 
 The aggregated count matches the cleartext computation exactly — BFV
 is *exact* over its integer plaintext space. The per-site counts, which
-the coordinator never sees, were:
+the aggregator never sees, were:
 
 ```{python}
 [len(df.query(QUERY)) for df in site_data]
@@ -123,17 +123,16 @@ the coordinator never sees, were:
 
 ## What just happened
 
-1. The coordinator created an encryption context and distributed the
+1. The aggregator created an encryption context and distributed the
    **public key** to all sites.
 2. Each site computed its local count in the clear, encrypted it, and
-   sent the ciphertext to the coordinator.
-3. The coordinator added the encrypted counts using `+` — BFV's
-   homomorphic addition makes this equivalent to adding the
-   plaintexts.
-4. Only the coordinator, holding the **secret key**, could decrypt the
+   sent the encrypted count to the aggregator.
+3. The aggregator added the encrypted counts using `+`, which gives
+   the same answer as adding the counts themselves.
+4. Only the aggregator, holding the **secret key**, could decrypt the
    total.
 
-No site revealed its individual count. The coordinator never saw any
+No site revealed its individual count. The aggregator never saw any
 patient-level data. The total is exact.
 
 ## The same run, in one call
@@ -147,14 +146,14 @@ result.total_encrypted, result.total_cleartext, result.exact
 
 ## The limit of this trust model
 
-The coordinator holds the secret key. If a site's ciphertext were ever
-sent on its own, the coordinator *could* decrypt it — the protocol
-relies on the coordinator only ever seeing the sum.
+The aggregator holds the secret key. If a site's encrypted count were
+ever sent on its own, the aggregator *could* decrypt it — the protocol
+relies on the aggregator only ever seeing the sum.
 
 [Distributed query counting](query-count.qmd) removes that reliance.
 There the key is generated n-of-n, split across the sites, so the
-coordinator cannot decrypt anything alone. Same computation, and the
-guarantee stops depending on what the coordinator chooses to look at.
+aggregator cannot decrypt anything alone. Same computation, and the
+guarantee stops depending on what the aggregator chooses to look at.
 
 ## What BFV brings over an additive-only scheme
 
@@ -165,9 +164,10 @@ only additive homomorphism. With BFV:
   more complex integer-valued aggregates.
 - **Performance** — OpenFHE's optimized C++ backend is orders of
   magnitude faster than a big-integer Paillier implementation.
-- **SIMD packing** — BFV encrypts integer vectors; multiple per-site
-  counts can ride in the slots of a single ciphertext for parallel
-  aggregation.
+- **Packing** — BFV encrypts whole integer vectors, and one
+  arithmetic operation acts on every position at once. Several
+  per-site counts can therefore ride in the slots of a single
+  encrypted value and be aggregated together.
 - **Threshold FHE** — the secret key can be split across parties so no
   single party can decrypt unilaterally, which is what
   [query counting](query-count.qmd) uses.

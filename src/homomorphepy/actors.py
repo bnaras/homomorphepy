@@ -40,6 +40,7 @@ __all__ = [
     "make_worker",
     "make_ckks_master",
     "make_threshold_master",
+    "make_joint_rotation_keys",
 ]
 
 LocalFn = Callable[[Any, Any], Any]
@@ -336,3 +337,55 @@ def make_threshold_master(
     for s in sites:
         s.public_key = joint_pk
     return master
+
+
+def make_joint_rotation_keys(
+    master: ThresholdMaster,
+    indices: Sequence[int],
+) -> None:
+    """Run the n-of-n ceremony that authorizes slot rotations.
+
+    Rotating the slots of an encrypted vector needs a *rotation key* per
+    index. Under a single key those come straight from the secret key;
+    under threshold keys no such key exists, so the sites build them
+    jointly, mirroring the ceremony that built the public key: the lead
+    generates its share, each remaining site folds its own share in, and
+    the accumulated map is registered against the joint public key's
+    tag.
+
+    Needed by any protocol that sums across slots or applies a matrix to
+    an encrypted vector, since both are built from rotations.
+
+    Two of the four calls involved are *static* on the OpenFHE
+    ``CryptoContext`` rather than instance methods
+    (``GetEvalAutomorphismKeyMap`` and ``InsertEvalAutomorphismKey``).
+    Calling them on the instance appears to work and silently operates
+    on the wrong registry, so they are reached through the class here.
+
+    Returns nothing: the keys live in the context's registry, and every
+    later ``EvalRotate`` under the joint key finds them there.
+    """
+    sites = master.sites
+    if len(sites) < 2:
+        raise ValueError("joint rotation keys need at least two sites")
+    indices = [int(i) for i in indices]
+    if not indices:
+        raise ValueError("no rotation indices requested")
+
+    cc = master.ctx.cc
+    cls = type(cc)
+    joint_tag = master.joint_public_key.GetKeyTag()
+
+    # Lead site: seed the registry under its own key tag.
+    lead = sites[0]
+    cc.EvalRotateKeyGen(lead.secret_share, indices)
+    running = cls.GetEvalAutomorphismKeyMap(lead.secret_share.GetKeyTag())
+
+    # Remaining sites fold their shares in, one at a time.
+    for site in sites[1:]:
+        share = cc.MultiEvalAtIndexKeyGen(
+            site.secret_share, running, indices, joint_tag
+        )
+        running = cc.MultiAddEvalAutomorphismKeys(running, share, joint_tag)
+
+    cls.InsertEvalAutomorphismKey(running, joint_tag)

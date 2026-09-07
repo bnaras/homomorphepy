@@ -7,14 +7,14 @@ and the only step that leaves a site is the consensus average
     z^{k+1} = (1/N) sum_i (x_i^{k+1} + u_i^k)
 
 which travels encrypted. Each site packs its length-p vector into one
-ciphertext under the joint public key; the aggregator sums the
-ciphertexts and multiplies by the plaintext constant 1/N (a single
-ciphertext-plaintext multiply, depth 1) and the sites jointly
+encrypted value under the joint public key; the aggregator sums those
+and multiplies by the unencrypted constant 1/N (one multiplication by
+a cleartext value, one level of the precision budget) and the sites jointly
 threshold-decrypt the result.
 
 The aggregator therefore learns the consensus trajectory {z^k} and
 nothing else: the per-site (x_i + u_i) vectors never exist in
-plaintext outside their own site, and no party can decrypt alone.
+in the clear outside their own site, and no party can decrypt alone.
 
 Solver discipline
 -----------------
@@ -230,7 +230,7 @@ def _admm_loop(sites, p, rho, max_iter, tol, consensus_fn):
 
 
 def run(seed: int = 98765, cohort=None) -> ADMMResult:
-    """Fit the consensus logistic model, plaintext and encrypted.
+    """Fit the consensus logistic model, unencrypted and encrypted.
 
     Simulates a cohort from the DGP unless one is passed in as
     ``cohort``, a sequence of ``(X, y)`` pairs -- one per site.
@@ -264,7 +264,7 @@ def run(seed: int = 98765, cohort=None) -> ADMMResult:
         raise RuntimeError("no rho in the grid converged")
     rho = min(converged, key=lambda r: converged[r])
 
-    # -- plaintext reference at the chosen rho ------------------------
+    # -- unencrypted reference at the chosen rho ----------------------
     sites = build(rho)
     beta_plain, n_plain, _ = _admm_loop(sites, p, rho, max_iter, tol, plain_consensus)
 

@@ -61,7 +61,7 @@ CKKS_PARAMS
 ```
 
 `batch_size` has to hold a full 6416-length vector, since a whole
-probe-wise summary rides in the slots of one ciphertext.
+probe-wise summary rides in the slots of one encrypted value.
 
 ## 1. Pooled standardization, under encryption
 

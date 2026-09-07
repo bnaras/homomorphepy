@@ -19,7 +19,7 @@ repeat, so every run reads the same bytes. See
 Ordered by dependency weight:
 
 - :mod:`~homomorphepy.examples.aggregation` — encrypted counting under
-  a single-decrypter coordinator (BFV).
+  a single-decrypter aggregator (BFV).
 - :mod:`~homomorphepy.examples.query_count` — the same count under
   threshold BFV, where no single party can decrypt.
 - :mod:`~homomorphepy.examples.mle` — Poisson MLE driven through the
