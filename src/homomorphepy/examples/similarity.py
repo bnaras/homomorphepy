@@ -322,7 +322,7 @@ def _unit_rows(z: np.ndarray) -> np.ndarray:
 
 
 def random_drift(p: int, beta: float, rng: np.random.Generator) -> np.ndarray:
-    """A fine-tune, modelled as ``B = Q D``.
+    """A fine-tune, modeled as ``B = Q D``.
 
     A random rotation composed with an anisotropic stretch
     ``D = diag(exp(beta * g))``. ``beta = 0`` gives an exactly

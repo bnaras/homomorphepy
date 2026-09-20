@@ -43,7 +43,7 @@ homomorphepy needs the `openfhe` extension module, which is not importable.
 
   Already ran pip successfully and still see this?
       That is the expected failure mode off Linux/CPython-3.12: the
-      wheels are mislabelled `py3-none-any`, so pip installs them
+      wheels are mislabeled `py3-none-any`, so pip installs them
       anywhere and the import fails afterwards.
 """
 

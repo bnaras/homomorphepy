@@ -126,7 +126,7 @@ class TestFullPipeline:
 
     def test_centralized_fit_matches_Rs(self, full):
         # No ADMM involved: two independent Clarabel builds on the
-        # same convex problem, reached through two modelling layers.
+        # same convex problem, reached through two modeling layers.
         # Measured 2.0e-07.
         r_agg = np.asarray(load_golden()["agg_beta"], dtype=float)
         assert np.max(np.abs(full.beta_centralized - r_agg)) < 1e-5

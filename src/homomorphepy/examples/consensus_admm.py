@@ -19,7 +19,7 @@ in the clear outside their own site, and no party can decrypt alone.
 Solver discipline
 -----------------
 
-**The solver is named explicitly, never left to the modelling layer's
+**The solver is named explicitly, never left to the modeling layer's
 automatic choice.** R passes ``solver = "CLARABEL"`` to every
 ``psolve()`` call; this module passes ``solver=cp.CLARABEL`` to every
 ``problem.solve()``. Two reasons, and the second is the serious one:
@@ -29,7 +29,7 @@ automatic choice.** R passes ``solver = "CLARABEL"`` to every
    trajectory difference looks like a bug in the protocol rather than
    a difference of algorithm.
 2. The automatic choice depends on *what happens to be installed*, so
-   the same script can change behaviour on a different machine with no
+   the same script can change behavior on a different machine with no
    diff to point at.
 
 :data:`SOLVER` is the single place it is set, and

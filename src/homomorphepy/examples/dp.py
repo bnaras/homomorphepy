@@ -83,7 +83,7 @@ On randomness
 Two DP runs never agree on values, by construction -- the mechanism is
 randomized, so a specific coefficient is not a reproducible quantity
 and nothing here should be compared value-for-value against anything.
-What is stable, and what the tests assert, is the behaviour: sigma = 0
+What is stable, and what the tests assert, is the behavior: sigma = 0
 reproduces the lossless fit, error grows with sigma, and gradient-based
 search collapses before gradient-free search does.
 """

@@ -18,7 +18,7 @@ def test_importing_the_package_does_not_import_openfhe():
     assert "openfhe" not in sys.modules or _backend.have_backend()
 
 
-def test_missing_backend_explains_the_mislabelled_wheel():
+def test_missing_backend_explains_the_mislabeled_wheel():
     if _backend.have_backend():
         pytest.skip("openfhe is importable here")
     with pytest.raises(ImportError) as exc:
@@ -26,7 +26,7 @@ def test_missing_backend_explains_the_mislabelled_wheel():
     msg = str(exc.value)
     # The trap worth naming explicitly: pip reports success off
     # Linux/CPython-3.12 and the import fails afterwards.
-    assert "py3-none-any" in msg or "mislabelled" in msg
+    assert "py3-none-any" in msg or "mislabeled" in msg
     assert "1.5.1.0.24.4" in msg
     assert "docs/install.md" in msg
 

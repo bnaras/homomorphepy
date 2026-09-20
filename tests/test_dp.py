@@ -6,7 +6,7 @@ The **accounting** is pure arithmetic -- zCDP composition, the
 epsilon conversion, the finite-difference amplification factor -- and
 runs in milliseconds with no crypto at all.
 
-The **behavioural** claims need real fits through the encrypted
+The **behavioral** claims need real fits through the encrypted
 channel and are slow, so they are marked and deselected by default.
 They assert an *ordering*, not values: DP noise is drawn afresh every
 query, so two runs never agree on numbers even within one language,
@@ -79,7 +79,7 @@ class TestAccounting:
 @pytest.mark.slow
 @pytest.mark.openfhe
 @pytest.mark.skipif(not have_backend(), reason="openfhe not installed")
-class TestBehaviour:
+class TestBehavior:
     """Real fits through the encrypted channel. Minutes, not seconds."""
 
     def test_zero_sigma_reproduces_the_lossless_fit(self):

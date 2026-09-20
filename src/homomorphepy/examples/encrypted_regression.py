@@ -91,7 +91,7 @@ def fit_logistic(
 ) -> np.ndarray:
     """Maximum-likelihood logistic fit, in the clear.
 
-    Newton-Raphson directly rather than through a modelling library:
+    Newton-Raphson directly rather than through a modeling library:
     the fit is three columns on 500 rows, and doing it here keeps the
     example free of a dependency it would use once.
     """
