@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 import cvxpy as cp
 import numpy as np
 
-from homomorphepy.actors import ThresholdMaster, ThresholdSite, make_threshold_master
+from homomorphepy.actors import ThresholdMaster, make_threshold_master, make_worker
 from homomorphepy.context import Context, fhe_context
 
 __all__ = [
@@ -271,15 +271,27 @@ def run(seed: int = 98765, cohort=None) -> ADMMResult:
     # -- encrypted run: same loop, encrypted consensus ----------------
     ctx = fhe_context("CKKS", **CKKS_PARAMS)
     enc_sites = build(rho)
-    # Threshold sites carry the key shares; the ADMM peers are separate
-    # objects, so pair them by position.
+    # The key-holding parties; the ADMM peers are separate objects, so
+    # pair them by position.
     key_holders = [
-        ThresholdSite(f"Site {i + 1}", None, lambda d, t: 0.0) for i in range(N)
+        make_worker(f"Site {i + 1}", None, lambda d, t: 0.0) for i in range(N)
     ]
     master = make_threshold_master("Aggregator", ctx, key_holders)
 
+    # What each party kept from that one exchange: its own secret share
+    # and a copy of the public parameters — the crypto context and the
+    # joint public key, and no share of anyone else's. Asking a site
+    # what it holds involves no aggregator.
+    pub = [h.params for h in key_holders]
+
     def encrypted_consensus(sites):
-        cts = [master.encrypt(s.x_curr + s.u_curr) for s in sites]
+        # Each party encrypts its own x_k + u_k with the parameters it
+        # kept from wiring. Encrypting at the aggregator instead would
+        # mean handing it the per-site vectors in the clear first,
+        # which is the disclosure this round exists to avoid.
+        cts = [
+            par.encrypt(s.x_curr + s.u_curr) for par, s in zip(pub, sites, strict=True)
+        ]
         ct_avg = sum(cts) * (1.0 / len(sites))
         return np.asarray(master.decrypt(ct_avg, length=p), dtype=float)
 

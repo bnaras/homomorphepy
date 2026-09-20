@@ -15,16 +15,18 @@ from homomorphepy._backend import backend, have_backend, set_thread_env
 from homomorphepy.actors import (
     CKKSMaster,
     Master,
+    RemoteSite,
     Site,
+    SiteUnavailable,
     ThresholdMaster,
-    ThresholdSite,
     make_ckks_master,
+    make_joint_rotation_keys,
     make_site,
     make_threshold_master,
     make_worker,
 )
 from homomorphepy.ciphertext import Ct, unwrap, wrap
-from homomorphepy.codec import Codec, packed_codec
+from homomorphepy.codec import Codec, as_exact_integer, packed_codec
 from homomorphepy.context import Context, Scheme, fhe_context
 from homomorphepy.fixtures import (
     FixtureError,
@@ -38,6 +40,12 @@ from homomorphepy.fixtures import (
     site_order,
     verify_all,
 )
+from homomorphepy.params import (
+    BadContribution,
+    KeyMismatch,
+    OpenFHEParams,
+    PublicParams,
+)
 
 __version__ = "1.5.1.dev0"
 
@@ -46,18 +54,25 @@ __all__ = [
     "make_threshold_master",
     "make_site",
     "make_ckks_master",
-    "ThresholdSite",
+    "make_joint_rotation_keys",
     "ThresholdMaster",
+    "RemoteSite",
     "Site",
+    "SiteUnavailable",
     "Master",
+    "BadContribution",
     "CKKSMaster",
     "Codec",
     "Context",
     "Ct",
     "FixtureError",
+    "KeyMismatch",
+    "OpenFHEParams",
+    "PublicParams",
     "Scheme",
     "Tolerance",
     "__version__",
+    "as_exact_integer",
     "backend",
     "fhe_context",
     "fixture_dir",

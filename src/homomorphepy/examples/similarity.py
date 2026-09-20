@@ -53,11 +53,12 @@ import numpy as np
 
 from homomorphepy.actors import (
     ThresholdMaster,
-    ThresholdSite,
     make_joint_rotation_keys,
     make_threshold_master,
+    make_worker,
 )
 from homomorphepy.ciphertext import Ct
+from homomorphepy.codec import packed_codec
 from homomorphepy.context import Context, fhe_context
 
 __all__ = [
@@ -179,10 +180,15 @@ def _rotate(ct: Ct, k: int, cc) -> Ct:
     return Ct(cc.EvalRotate(ct.raw, int(k)), cc)
 
 
-def _matvec(ct: Ct, diags: list[np.ndarray], master: ThresholdMaster) -> Ct:
-    """``A q`` for encrypted ``q`` and unencrypted ``A`` given as diagonals."""
-    cc = master.ctx.cc
-    codec = master.codec
+def _matvec(ct: Ct, diags: list[np.ndarray], ctx: Context) -> Ct:
+    """``A q`` for encrypted ``q`` and unencrypted ``A`` given as diagonals.
+
+    Takes the crypto context, not a master: applying an adapter to an
+    encrypted query is a site-side computation that needs nothing from
+    the aggregator, and naming one here would say otherwise.
+    """
+    cc = ctx.cc
+    codec = packed_codec(ctx)
     total = None
     for i, d in enumerate(diags):
         if not np.any(d):
@@ -213,11 +219,14 @@ def run(seed: int = 20260907, top_k: int | None = None) -> SimilarityResult:
 
     # -- setup: joint keys, then the rotation keys the protocol needs --
     ctx = fhe_context("CKKS", **CKKS_PARAMS)
-    holders = [
-        ThresholdSite(s["name"], None, lambda d, t: 0.0) for s in site_specs
-    ]
+    holders = [make_worker(s["name"], None, lambda d, t: 0.0) for s in site_specs]
     master = make_threshold_master("Aggregator", ctx, holders)
     make_joint_rotation_keys(master, range(1, p))
+
+    # The public bundle, read off a site rather than the aggregator:
+    # it is what that site kept from wiring, and it is all anyone needs
+    # in order to encrypt under the joint key.
+    pub = holders[0].params
 
     # Each site fits its adapter on the public anchor cohort. The
     # adapter never leaves the site; only its effect on an encrypted
@@ -232,17 +241,18 @@ def run(seed: int = 20260907, top_k: int | None = None) -> SimilarityResult:
     rng = np.random.default_rng(seed + 7)
     query = rng.normal(size=p)
     query = query / np.linalg.norm(query)
-    ct_query = master.encrypt(query.tolist())
+    ct_query = pub.encrypt(query.tolist())
 
     # -- each site scores its own cohort, without decrypting ---------
     encrypted_scores: list[tuple[str, int, Ct]] = []
+    site_codec = packed_codec(ctx)
     for s in site_specs:
-        ct_mapped = _matvec(ct_query, s["diags"], master)
+        ct_mapped = _matvec(ct_query, s["diags"], ctx)
         for i, v in enumerate(s["database"]):
             # Slot-wise against this patient's own unencrypted vector,
             # then fold the slots to leave the inner product in slot 0.
             term = Ct(
-                ctx.cc.EvalMult(ct_mapped.raw, master.codec.encode(v.tolist())),
+                ctx.cc.EvalMult(ct_mapped.raw, site_codec.encode(v.tolist())),
                 ctx.cc,
             )
             encrypted_scores.append((s["name"], i, _slot_sum(term, p, ctx.cc)))
@@ -380,8 +390,9 @@ def fit_adapter_mu(
         skew = a.T @ a - np.eye(p)
         return (2 * anchor_site.T @ resid + 4 * mu * (a @ skew)).ravel()
 
-    out = minimize(fn, a_ls.ravel(), jac=gr, method="L-BFGS-B",
-                   options=dict(maxiter=400))
+    out = minimize(
+        fn, a_ls.ravel(), jac=gr, method="L-BFGS-B", options=dict(maxiter=400)
+    )
     return out.x.reshape(p, p)
 
 
@@ -513,17 +524,22 @@ def beta_sweep(
     cfg = SWEEP
     out = []
     for beta in betas:
-        rng = np.random.default_rng(seed)          # same draw at every beta
+        rng = np.random.default_rng(seed)  # same draw at every beta
         centers = _unit_rows(rng.normal(size=(cfg["n_phenotypes"], cfg["p"])))
         ident = [np.eye(cfg["p"])] * cfg["n_sites"]
         k = cfg["top_k"]
         acc = dict(
-            procrustes=0.0, near_orthogonal=0.0, least_squares=0.0,
-            ideal=0.0, unaligned=0.0,
+            procrustes=0.0,
+            near_orthogonal=0.0,
+            least_squares=0.0,
+            ideal=0.0,
+            unaligned=0.0,
         )
         for _ in range(cfg["n_rep"]):
             w = _world(beta, n_anchor, centers, rng, cfg)
-            qp = _embed(cfg["n_query"], centers, rng, cfg["separation"], cfg["noise_sd"])
+            qp = _embed(
+                cfg["n_query"], centers, rng, cfg["separation"], cfg["noise_sd"]
+            )
             acc["ideal"] += fed_recall(qp, w["public_db"], ident, 2, k)
             acc["unaligned"] += fed_recall(qp, w["private_db"], ident, 2, k)
             for name, mu in (

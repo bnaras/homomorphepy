@@ -48,8 +48,22 @@ __all__ = [
 # probabilities stable between runs and identical to the R vignette's.
 PANEL_AGE = (45, 52, 60, 38, 70, 55, 48, 63, 41, 57, 66, 44, 72, 50, 59, 35)
 PANEL_BIOMARKER = (
-    -0.5, 0.3, 1.2, -1.0, 0.8, 0.1, -0.3, 1.5,
-    -0.8, 0.6, 0.9, -0.4, 1.1, 0.0, 0.7, -1.2,
+    -0.5,
+    0.3,
+    1.2,
+    -1.0,
+    0.8,
+    0.1,
+    -0.3,
+    1.5,
+    -0.8,
+    0.6,
+    0.9,
+    -0.4,
+    1.1,
+    0.0,
+    0.7,
+    -1.2,
 )
 
 # The sigmoid is approximated on this interval. It has to cover the
@@ -72,7 +86,9 @@ class RegressionResult:
     context: Context = field(repr=False)
 
 
-def fit_logistic(age: np.ndarray, biomarker: np.ndarray, outcome: np.ndarray) -> np.ndarray:
+def fit_logistic(
+    age: np.ndarray, biomarker: np.ndarray, outcome: np.ndarray
+) -> np.ndarray:
     """Maximum-likelihood logistic fit, in the clear.
 
     Newton-Raphson directly rather than through a modelling library:
@@ -136,7 +152,9 @@ def run() -> RegressionResult:
 
     # -- hospital: decrypt -------------------------------------------
     n = len(PANEL_AGE)
-    probs = np.asarray(codec.decode(ctx.Decrypt(ct_prob.raw, keys.secretKey), n), dtype=float)
+    probs = np.asarray(
+        codec.decode(ctx.Decrypt(ct_prob.raw, keys.secretKey), n), dtype=float
+    )
 
     eta_clear = beta[0] + beta[1] * panel_age + beta[2] * panel_bm
     probs_clear = 1.0 / (1.0 + np.exp(-eta_clear))

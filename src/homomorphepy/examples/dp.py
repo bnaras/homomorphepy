@@ -97,7 +97,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import minimize
 
-from homomorphepy.actors import ThresholdSite, make_threshold_master
+from homomorphepy.actors import make_threshold_master, make_worker
 from homomorphepy.context import Context, fhe_context
 from homomorphepy.examples import consensus_admm as _ca
 from homomorphepy.examples.cox import CKKS_PARAMS, COVARIATES, local_cox_nll
@@ -201,7 +201,7 @@ def fit_at_sigma(
         return value + (rng.normal(0.0, scale) if sigma > 0 else 0.0)
 
     ctx = fhe_context("CKKS", **CKKS_PARAMS)
-    workers = [ThresholdSite(n, sites[n], noisy_local) for n in names]
+    workers = [make_worker(n, sites[n], noisy_local) for n in names]
     master = make_threshold_master("Aggregator", ctx, workers)
 
     calls = {"n": 0}
@@ -353,23 +353,26 @@ def consensus_at_sigma(sigma: float, seed: int = 98765) -> DPConsensusFit:
 
     ctx = fhe_context("CKKS", **_ca.CKKS_PARAMS)
     key_holders = [
-        ThresholdSite(f"Site {i + 1}", None, lambda d, t: 0.0) for i in range(N)
+        make_worker(f"Site {i + 1}", None, lambda d, t: 0.0) for i in range(N)
     ]
     master = make_threshold_master("Aggregator", ctx, key_holders)
+    pub = [h.params for h in key_holders]
     rng = np.random.default_rng(seed + 1)
 
     def noised_encrypted_consensus(sites):
         cts = []
-        for s in sites:
+        # The noise is drawn at the site and folded in before
+        # encryption, so what the aggregator sums is already both
+        # noised and encrypted. Adding it at the aggregator would mean
+        # it had seen the clean vector first.
+        for par, s in zip(pub, sites, strict=True):
             draw = rng.normal(0.0, sigma * np.sqrt(N), size=p) if sigma > 0 else 0.0
-            cts.append(master.encrypt(s.x_curr + s.u_curr + draw))
+            cts.append(par.encrypt(s.x_curr + s.u_curr + draw))
         ct_avg = sum(cts) * (1.0 / len(sites))
         return np.asarray(master.decrypt(ct_avg, length=p), dtype=float)
 
     sites = build(rho)
-    beta, n_iter, _ = _ca._admm_loop(
-        sites, p, rho, T, 0.0, noised_encrypted_consensus
-    )
+    beta, n_iter, _ = _ca._admm_loop(sites, p, rho, T, 0.0, noised_encrypted_consensus)
 
     # Report the residuals the loop deliberately stopped consulting, so
     # the noise floor is visible rather than merely asserted.

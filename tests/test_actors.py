@@ -1,12 +1,10 @@
 """Site/Master protocol behavior, against real ciphertexts.
 
-Mirrors homomorpheR's tinytest coverage for the supported (non-Paillier)
-actor surface: test_sites.R, test_master_worker.R, test_ckks_master.R,
-test_threshold_master.R and test_threshold_bfv.R.
-
-The threshold tests additionally check the property the R version
-cannot have, because its master holds every share: that no secret
-material sits on the master at all.
+Covers the supported (non-Paillier) actor surface: sites, the two
+masters, the setup seam and the threshold ceremony. The failure modes
+-- cleartext replies, foreign keys, repeated parties, exact-scheme
+overflow -- live in ``test_adversarial.py``, because they are exactly
+the ones an arithmetic test passes either way.
 """
 
 from __future__ import annotations
@@ -17,8 +15,7 @@ import pytest
 
 from homomorphepy import (
     CKKSMaster,
-    Site,
-    ThresholdSite,
+    OpenFHEParams,
     fhe_context,
     have_backend,
     load_json,
@@ -51,19 +48,31 @@ def ckks():
 
 
 class TestSite:
-    def test_summary(self):
-        s = Site("A", [1.0, 2.0, 3.0], mean_fn)
-        assert s.summary(0.0) == 6.0
+    def test_a_configured_site_returns_ciphertext(self, ckks):
+        s = make_worker("A", [1.0, 2.0, 3.0], mean_fn)
+        make_ckks_master("M", ckks, ckks.KeyGen()).set_workers([s])
+        ct = s.contribute(0.0)
+        # What leaves is encrypted, and stamped with the key it was
+        # encrypted under -- which is what check_encrypted tests.
+        assert ct.raw.GetKeyTag() == s.params.tag
 
-    def test_none_signals_non_evaluable(self):
-        s = Site("A", None, lambda d, t: None)
-        assert s.summary(0.0) is None
+    def test_none_signals_non_evaluable_before_encryption(self):
+        # No params needed: a site that cannot evaluate says so without
+        # reaching the codec.
+        s = make_worker("A", None, lambda d, t: None)
+        assert s.contribute(0.0) is None
 
     def test_nan_also_signals_non_evaluable(self):
-        # R's local_fn returns NA; a Python local_fn is as likely to
-        # produce NaN from a failed solve, so both are accepted.
-        s = Site("A", None, lambda d, t: float("nan"))
-        assert s.summary(0.0) is None
+        s = make_worker("A", None, lambda d, t: float("nan"))
+        assert s.contribute(0.0) is None
+
+    def test_a_site_holds_its_params_and_nothing_of_the_master(self, ckks):
+        s = make_worker("S", [1.0], mean_fn)
+        m = make_ckks_master("M", ckks, ckks.KeyGen())
+        m.set_workers([s])
+        assert isinstance(s.params, OpenFHEParams)
+        # The site keeps no handle on whoever wired it.
+        assert not any(v is m for v in vars(s).values())
 
 
 class TestCKKSMaster:
@@ -83,10 +92,10 @@ class TestCKKSMaster:
         m = make_ckks_master("M", ckks, ckks.KeyGen()).set_workers([good, bad])
         assert math.isnan(m.aggregate(0.0))
 
-    def test_workers_receive_the_public_key(self, ckks):
+    def test_workers_receive_the_setup_message(self, ckks):
         s = make_worker("S", [1.0], mean_fn)
         m = make_ckks_master("M", ckks, ckks.KeyGen()).set_workers([s])
-        assert s.public_key is m.public_key
+        assert s.params.tag == m.keypair.publicKey.GetKeyTag()
 
     def test_aggregate_without_workers_is_an_error(self, ckks):
         m = CKKSMaster("M", ckks, ckks.KeyGen())
@@ -103,9 +112,9 @@ class TestThresholdMaster:
     @pytest.fixture
     def threshold(self, ckks):
         sites = [
-            ThresholdSite("S1", [1.0, 2.0], mean_fn),
-            ThresholdSite("S2", [3.0, 4.0], mean_fn),
-            ThresholdSite("S3", [5.0, 6.0], mean_fn),
+            make_worker("S1", [1.0, 2.0], mean_fn),
+            make_worker("S2", [3.0, 4.0], mean_fn),
+            make_worker("S3", [5.0, 6.0], mean_fn),
         ]
         return make_threshold_master("M", ckks, sites), sites
 
@@ -115,48 +124,39 @@ class TestThresholdMaster:
         assert m.aggregate(1.0) == pytest.approx(expected, abs=TOL)
 
     def test_master_holds_no_secret_material(self, threshold):
-        # The property homomorpheR's master cannot have: it stores every
-        # sk_i. Here the shares live at the sites, which is what makes a
-        # cross-process (or cross-language) split possible without
-        # shipping private keys.
+        # Structural, not a promise in prose: the master has no
+        # attribute a share could occupy, and every share is at the
+        # site that generated it. That is what makes a cross-process
+        # (or cross-language) split possible without shipping private
+        # keys.
         m, sites = threshold
-        assert not hasattr(m, "secret_keys")
-        assert not hasattr(m, "secret_share")
-        assert all(s.secret_share is not None for s in sites)
+        assert set(vars(m)) == {"name", "ctx", "workers", "joint_public_key"}
+        assert all(s.has_share for s in sites)
 
     def test_every_site_holds_a_distinct_share(self, threshold):
         _, sites = threshold
         assert len({id(s.secret_share) for s in sites}) == len(sites)
 
-    def test_exactly_one_lead(self, threshold):
+    def test_the_lead_role_comes_from_position_not_from_the_site(self, threshold):
+        # The master tells each site which role it is playing, fixed by
+        # its position in the key-generation chain. A site does not
+        # carry the role, so there is no flag to permute.
         _, sites = threshold
-        assert [s._is_lead for s in sites] == [True, False, False]
+        assert not any(hasattr(s, "_is_lead") for s in sites)
 
-    def test_fusion_requires_the_lead_first(self, threshold):
-        # OpenFHE requires the lead partial first; permuting yields
-        # garbage rather than an error, so the master refuses.
+    def test_every_site_shares_the_joint_key(self, threshold):
         m, sites = threshold
-        sites[0]._is_lead, sites[1]._is_lead = False, True
-        try:
-            with pytest.raises(RuntimeError, match="must be the lead"):
-                m.aggregate(0.0)
-        finally:
-            sites[0]._is_lead, sites[1]._is_lead = True, False
+        joint = m.joint_public_key.GetKeyTag()
+        assert all(s.params.tag == joint for s in sites)
 
     def test_two_sites_minimum(self, ckks):
         with pytest.raises(ValueError, match="at least two sites"):
-            make_threshold_master("M", ckks, [ThresholdSite("only", [1.0], mean_fn)])
-
-    def test_plain_sites_are_rejected(self, ckks):
-        with pytest.raises(TypeError, match="ThresholdSite"):
-            make_threshold_master(
-                "M", ckks, [Site("a", [1.0], mean_fn), Site("b", [2.0], mean_fn)]
-            )
+            make_threshold_master("M", ckks, [make_worker("only", [1.0], mean_fn)])
 
     def test_non_evaluable_site_yields_nan(self, ckks):
         sites = [
-            ThresholdSite("ok", [1.0], mean_fn),
-            ThresholdSite("bad", None, lambda d, t: None),
+            make_worker("ok", [1.0], mean_fn),
+            make_worker("bad", None, lambda d, t: None),
         ]
         m = make_threshold_master("M", ckks, sites)
         assert math.isnan(m.aggregate(0.0))
@@ -177,7 +177,7 @@ class TestThresholdBFVExactCounting:
             )
 
         sites = [
-            ThresholdSite(f"site{i + 1}", rows, count_fn)
+            make_worker(f"site{i + 1}", rows, count_fn)
             for i, rows in enumerate(f["sites"])
         ]
         m = make_threshold_master("M", ctx, sites)

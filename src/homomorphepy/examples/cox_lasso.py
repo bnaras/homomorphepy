@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 import cvxpy as cp
 import numpy as np
 
-from homomorphepy.actors import ThresholdMaster, ThresholdSite, make_threshold_master
+from homomorphepy.actors import ThresholdMaster, make_threshold_master, make_worker
 from homomorphepy.context import Context, fhe_context
 from homomorphepy.examples.consensus_admm import SOLVER
 from homomorphepy.fixtures import load_dlbcl, load_dlbcl_gex, site_order
@@ -169,14 +169,26 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
     p_raw = sites[0]["X"].shape[1]
 
     ctx = fhe_context("CKKS", **CKKS_PARAMS)
-    key_holders = [ThresholdSite(s["name"], None, lambda d, t: 0.0) for s in sites]
+    key_holders = [make_worker(s["name"], None, lambda d, t: 0.0) for s in sites]
     master = make_threshold_master("Aggregator", ctx, key_holders)
 
+    # What each site kept from that one exchange: its own secret share
+    # and a copy of the public parameters — the crypto context and the
+    # joint public key, and no share of anyone else's. Asking a site
+    # what it holds involves no aggregator, and it is all a site needs
+    # in order to encrypt.
+    pub = [h.params for h in key_holders]
+
     # -- 1. pooled standardization, under encryption -----------------
-    # Each site contributes column sums and sums of squares; only the
-    # pooled moments are ever decrypted.
-    enc_s = sum(master.encrypt(s["X"].sum(axis=0)) for s in sites)
-    enc_q = sum(master.encrypt((s["X"] ** 2).sum(axis=0)) for s in sites)
+    # Each site forms its own column sums and sums of squares and
+    # encrypts them where they were computed; only the pooled moments
+    # are ever decrypted. Encrypting at the aggregator instead would
+    # mean handing it the per-site sums in the clear first, which is
+    # the disclosure this round exists to avoid.
+    enc_s = sum(p.encrypt(s["X"].sum(axis=0)) for p, s in zip(pub, sites, strict=True))
+    enc_q = sum(
+        p.encrypt((s["X"] ** 2).sum(axis=0)) for p, s in zip(pub, sites, strict=True)
+    )
     mu = np.asarray(master.decrypt(enc_s, length=p_raw), dtype=float) / n_total
     q = np.asarray(master.decrypt(enc_q, length=p_raw), dtype=float) / n_total
     sigma = np.sqrt(np.maximum(q - mu**2, np.finfo(float).eps))
@@ -190,13 +202,21 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
     sites_std = [{**s, "X": (s["X"] - mu) / sigma} for s in sites]
 
     # -- 2. screening, under encryption ------------------------------
+    # Site side: score and information at beta = 0 on the site's own
+    # rows, encrypted before either leaves.
     UI = [_score_info_at_zero(s["X"], s["time"], s["status"]) for s in sites_std]
     U = np.asarray(
-        master.decrypt(sum(master.encrypt(u) for u, _ in UI), length=p_raw),
+        master.decrypt(
+            sum(p.encrypt(u) for p, (u, _) in zip(pub, UI, strict=True)),
+            length=p_raw,
+        ),
         dtype=float,
     )
     info = np.asarray(
-        master.decrypt(sum(master.encrypt(i) for _, i in UI), length=p_raw),
+        master.decrypt(
+            sum(p.encrypt(i) for p, (_, i) in zip(pub, UI, strict=True)),
+            length=p_raw,
+        ),
         dtype=float,
     )
     Z = U / np.sqrt(np.maximum(info, np.finfo(float).eps))
@@ -248,8 +268,12 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
                 _solve(lp["prob"])
                 site_x[i] = np.asarray(lp["x"].value, dtype=float).ravel()
 
-            # The only step that leaves a site, and it is encrypted.
-            ct = sum(master.encrypt(x + u) for x, u in zip(site_x, site_u, strict=True))
+            # The only step that leaves a site, and the site encrypts
+            # it before it does. The per-site x_k + u_k never exists in
+            # the clear anywhere but at the site that formed it.
+            ct = sum(
+                p.encrypt(x + u) for p, x, u in zip(pub, site_x, site_u, strict=True)
+            )
             w_avg = np.asarray(
                 master.decrypt(ct * (1.0 / n_sites), length=K), dtype=float
             )

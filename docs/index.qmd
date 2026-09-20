@@ -61,7 +61,10 @@ appears in parentheses once and is then set aside.
   slot at once, which is what makes encrypted vector arithmetic
   affordable. You typically use the first few and ignore the rest.
 - **Site.** A party holding data that will not leave it. Sites never
-  share data and never see each other's contributions.
+  share data and never see each other's contributions. A site is given
+  the public parameters once, when it is wired, and from then on it
+  computes *and encrypts* on its own — so what leaves a site is
+  already encrypted.
 - **Aggregator.** The party that collects encrypted per-site
   contributions, adds them while they stay encrypted, and obtains the
   total. In the API this object is called a `Master`.

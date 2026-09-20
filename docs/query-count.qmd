@@ -140,18 +140,19 @@ from homomorphepy import fhe_context
 cc = fhe_context("BFV", plaintext_modulus=65537, multiplicative_depth=1)
 ```
 
-Each site is a `ThresholdSite` holding its own private table and a
-local function. The local function receives the broadcast query and
-evaluates it against that site's rows — this is the only place patient
-records are ever touched.
+Each site holds its own private table and a local function. The local
+function receives the broadcast query and evaluates it against that
+site's rows — this is the only place patient records are ever touched.
+The count it returns never leaves in the clear: the site encrypts it
+with the public parameters it was given at setup.
 
 ```{python}
-from homomorphepy.actors import ThresholdSite
+from homomorphepy.actors import make_worker
 
 def local_count(data, query):
     return len(data.query(query))
 
-sites = [ThresholdSite(f"Site {i + 1}", rows, local_count)
+sites = [make_worker(f"Site {i + 1}", rows, local_count)
          for i, rows in enumerate(site_data)]
 ```
 

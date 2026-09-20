@@ -121,16 +121,29 @@ key is what everything is encrypted under. `make_threshold_master` runs
 that chain and hands each site its share.
 
 ```{python}
-from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+from homomorphepy import fhe_context, make_worker, make_threshold_master
 
 cc = fhe_context("CKKS", multiplicative_depth=1, scaling_mod_size=59,
                  first_mod_size=60, batch_size=8)
 
-workers = [ThresholdSite(name, data, local_cox_nll)
+workers = [make_worker(name, data, local_cox_nll)
            for name, data in sites.items()]
 
 aggregator = make_threshold_master("Aggregator", cc, workers)
 aggregator
+```
+
+The workers are built exactly as on the single-key page. What makes a
+site a threshold party is having run a key-generation round, not being
+of a different type — so the same `make_worker()` call serves both,
+and only the wiring differs. Here the sites come first, because the
+joint key cannot exist before they do.
+
+The share each site generated stayed there. We can check that rather
+than assert it:
+
+```{python}
+[(w.name, w.has_share) for w in workers], hasattr(aggregator, "secret_share")
 ```
 
 The scaling parameters are lifted from the defaults for the same reason

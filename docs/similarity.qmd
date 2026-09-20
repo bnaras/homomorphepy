@@ -107,13 +107,23 @@ The querier's vector is encrypted under a joint public key that no
 single party can invert.
 
 ```{python}
-from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+from homomorphepy import fhe_context, make_worker, make_threshold_master
 from homomorphepy.examples.similarity import CKKS_PARAMS
 
 ctx = fhe_context("CKKS", **CKKS_PARAMS)
-holders = [ThresholdSite(s["name"], None, lambda d, t: 0.0) for s in sites]
+holders = [make_worker(s["name"], None, lambda d, t: 0.0) for s in sites]
 master = make_threshold_master("Aggregator", ctx, holders)
 CKKS_PARAMS
+```
+
+Everything below encrypts with the public bundle, which we read off a
+*site* rather than the aggregator: it is what that site kept from
+wiring, and it is all any party needs in order to encrypt under the
+joint key. Printing it is how you see that it is public in full.
+
+```{python}
+pub = holders[0].params
+pub
 ```
 
 Everything on this page needs one more kind of key. Both operations
@@ -140,7 +150,7 @@ from homomorphepy import Ct
 
 # A round trip through one rotation, to show the keys work: rotating by
 # k brings slot k into slot 0.
-ct_probe = master.encrypt(np.arange(p, dtype=float).tolist())
+ct_probe = pub.encrypt(np.arange(p, dtype=float).tolist())
 ct_rot = Ct(ctx.cc.EvalRotate(ct_probe.raw, 3), ctx.cc)
 round(float(np.asarray(master.decrypt(ct_rot, length=p), dtype=float)[0]), 6)
 ```
@@ -160,10 +170,16 @@ single level of the precision budget.
 
 ```{python}
 from homomorphepy.examples.similarity import diagonals
+from homomorphepy import packed_codec
 
-def matvec(ct, diags, master):
-    """A q, for encrypted q and an unencrypted A given as diagonals."""
-    cc, codec = master.ctx.cc, master.codec
+def matvec(ct, diags, ctx):
+    """A q, for encrypted q and an unencrypted A given as diagonals.
+
+    Takes the crypto context, not an aggregator: mapping an encrypted
+    query through a site's own adapter needs nothing from the party
+    that will later fuse the scores.
+    """
+    cc, codec = ctx.cc, packed_codec(ctx)
     total = None
     for i, d in enumerate(diags):
         if not np.any(d):                       # a zero diagonal adds nothing
@@ -181,8 +197,8 @@ rng = np.random.default_rng(20260914)
 query = rng.normal(size=p)
 query /= np.linalg.norm(query)
 
-ct_query = master.encrypt(query.tolist())
-ct_mapped = matvec(ct_query, diagonals(sites[0]["adapter"]), master)
+ct_query = pub.encrypt(query.tolist())
+ct_mapped = matvec(ct_query, diagonals(sites[0]["adapter"]), ctx)
 
 got = np.asarray(master.decrypt(ct_mapped, length=p), dtype=float)
 want = sites[0]["adapter"] @ query
@@ -215,7 +231,8 @@ def slot_sum(ct, p, cc):
     return out
 
 patient = sites[0]["database"][0]
-term = Ct(ctx.cc.EvalMult(ct_mapped.raw, master.codec.encode(patient.tolist())),
+site_codec = packed_codec(ctx)
+term = Ct(ctx.cc.EvalMult(ct_mapped.raw, site_codec.encode(patient.tolist())),
           ctx.cc)
 score = np.asarray(master.decrypt(slot_sum(term, p, ctx.cc), length=p),
                    dtype=float)[0]

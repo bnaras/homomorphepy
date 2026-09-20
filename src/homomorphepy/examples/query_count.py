@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from homomorphepy.actors import ThresholdMaster, ThresholdSite, make_threshold_master
+from homomorphepy.actors import ThresholdMaster, make_threshold_master, make_worker
 from homomorphepy.context import Context, fhe_context
 
 __all__ = ["QueryCountResult", "QUERY", "SITE_SIZES", "simulate", "count_fn", "run"]
@@ -83,8 +83,7 @@ def run(seed: int = 130, query: str = QUERY) -> QueryCountResult:
         "BFV", plaintext_modulus=PLAINTEXT_MODULUS, multiplicative_depth=1
     )
     sites = [
-        ThresholdSite(f"Site {i + 1}", rows, count_fn)
-        for i, rows in enumerate(site_data)
+        make_worker(f"Site {i + 1}", rows, count_fn) for i, rows in enumerate(site_data)
     ]
     # Chained key generation: every site ends up with its own share and
     # the master with only the joint public key.

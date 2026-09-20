@@ -168,17 +168,31 @@ aggregator sums the encrypted vectors, scales by $1/N$ *under
 encryption*, and the sites jointly decrypt.
 
 ```{python}
-from homomorphepy import fhe_context, ThresholdSite, make_threshold_master
+from homomorphepy import fhe_context, make_worker, make_threshold_master
 
 cc = fhe_context("CKKS", multiplicative_depth=2, scaling_mod_size=50,
                  first_mod_size=60, batch_size=8)
 
-key_holders = [ThresholdSite(f"Site {i+1}", None, lambda d, t: 0.0)
+key_holders = [make_worker(f"Site {i+1}", None, lambda d, t: 0.0)
                for i in range(len(cohort))]
 aggregator = make_threshold_master("Aggregator", cc, key_holders)
 
+# What each site kept from that one exchange: its own secret share and
+# a copy of the public parameters. Ask a site what it holds — no
+# aggregator is involved, and it is all a site needs to encrypt.
+pub = [h.params for h in key_holders]
+pub[0]
+```
+
+Each site encrypts its own $x_k + u_k$ with the parameters it kept.
+Encrypting at the aggregator instead would mean handing it the
+per-site vectors in the clear first, which is the disclosure this
+round exists to avoid.
+
+```{python}
 def encrypted_consensus(sites):
-    cts = [aggregator.encrypt(s.x_curr + s.u_curr) for s in sites]
+    cts = [par.encrypt(s.x_curr + s.u_curr)
+           for par, s in zip(pub, sites, strict=True)]
     ct_avg = sum(cts) * (1.0 / len(sites))
     return np.asarray(aggregator.decrypt(ct_avg, length=P), dtype=float)
 ```

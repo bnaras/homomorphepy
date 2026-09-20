@@ -35,7 +35,6 @@ from statsmodels.duration.hazard_regression import PHReg
 
 from homomorphepy.actors import (
     Master,
-    ThresholdSite,
     make_ckks_master,
     make_threshold_master,
     make_worker,
@@ -168,12 +167,16 @@ def run(
 
     ctx = fhe_context("CKKS", **CKKS_PARAMS)
 
+    # The same worker construction serves both protocols: what makes a
+    # site a threshold party is having run a key-generation round, not
+    # being of a different type. Only the wiring differs — a
+    # CKKSMaster is built first and takes workers, while the joint key
+    # cannot exist before the sites do.
+    workers = [make_worker(n, sites[n], local_cox_nll) for n in names]
     if backend == "ckks":
-        workers = [make_worker(n, sites[n], local_cox_nll) for n in names]
         master: Master = make_ckks_master("Master", ctx, ctx.KeyGen())
         master.set_workers(workers)
     elif backend == "threshold":
-        workers = [ThresholdSite(n, sites[n], local_cox_nll) for n in names]
         master = make_threshold_master("Aggregator", ctx, workers)
     else:
         raise ValueError(f"unknown backend {backend!r}; use 'ckks' or 'threshold'")

@@ -113,9 +113,7 @@ def run(seed: int = 42, query: str = QUERY) -> AggregationResult:
 if __name__ == "__main__":  # pragma: no cover
     r = run()
     print(f"site sizes        : {r.site_sizes}")
-    print(
-        f"per-site counts   : {r.per_site_cleartext}  (never seen by the aggregator)"
-    )
+    print(f"per-site counts   : {r.per_site_cleartext}  (never seen by the aggregator)")
     print(f"encrypted total   : {r.total_encrypted}")
     print(f"cleartext total   : {r.total_cleartext}")
     print(f"exact             : {r.exact}")
