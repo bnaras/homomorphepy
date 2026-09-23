@@ -56,6 +56,24 @@ class TestSite:
         # encrypted under -- which is what check_encrypted tests.
         assert ct.raw.GetKeyTag() == s.params.tag
 
+    def test_a_site_encrypts_on_its_own(self, ckks):
+        # The site is the whole of the argument: encrypt() needs only
+        # what the site was handed at wiring, and is the same operation
+        # as encrypting under the bundle it holds.
+        s = make_worker("A", [1.0], mean_fn)
+        m = make_ckks_master("M", ckks, ckks.KeyGen()).set_workers([s])
+        ct = s.encrypt(2.25)
+        assert ct.raw.GetKeyTag() == s.params.tag
+        assert math.isclose(m.decrypt(ct), 2.25, abs_tol=TOL)
+        assert math.isclose(m.decrypt(s.params.encrypt(2.25)), 2.25, abs_tol=TOL)
+
+    def test_an_unwired_site_cannot_encrypt(self):
+        # It fails in the terms of how a site is wired, not with an
+        # AttributeError from a missing bundle.
+        s = make_worker("Lone", [1.0], mean_fn)
+        with pytest.raises(RuntimeError, match="no public parameters"):
+            s.encrypt(1.0)
+
     def test_none_signals_non_evaluable_before_encryption(self):
         # No params needed: a site that cannot evaluate says so without
         # reaching the codec.

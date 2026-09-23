@@ -37,7 +37,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from homomorphepy.ciphertext import Ct, unwrap
-from homomorphepy.codec import packed_codec
+from homomorphepy.codec import Packable, packed_codec
 from homomorphepy.context import Context, Scheme
 from homomorphepy.params import OpenFHEParams, PublicParams
 
@@ -105,8 +105,9 @@ class Site:
     the master propagates that to the optimizer.
 
     A site is given its public parameters once, by
-    :meth:`set_public_params`, and encrypts with them in
-    :meth:`contribute`. Under threshold keys it also generates and keeps
+    :meth:`set_public_params`, and from then on encrypts with them on
+    its own: :meth:`encrypt` takes a value and nothing else, and
+    :meth:`contribute` is built on it. Under threshold keys it also generates and keeps
     its own secret share in :meth:`keygen_round`. The same class serves
     both protocols: what makes a site a threshold party is having run a
     key-generation round, not being of a different type.
@@ -192,6 +193,21 @@ class Site:
             )
         return self._params
 
+    def encrypt(self, value: Packable) -> Ct:
+        """Encrypt ``value`` with the parameters this site holds.
+
+        The site is the whole of the argument: it was handed its
+        public parameters once, at wiring, and needs nothing further to
+        encrypt. Callers therefore write ``site.encrypt(value)`` rather
+        than fetching ``site.params`` and handing it back — the two are
+        the same operation, but the second makes a party's own
+        material look like something to be retrieved.
+
+        Raises if the site was never wired, in the terms of how a site
+        is wired; see :attr:`params`.
+        """
+        return self.params.encrypt(value)
+
     def _clear(self) -> None:
         """Undo participation in a ceremony that did not complete.
 
@@ -226,7 +242,7 @@ class Site:
             return None
         if isinstance(value, float) and math.isnan(value):
             return None
-        return self.params.encrypt(value)
+        return self.encrypt(value)
 
     # -- threshold keys ------------------------------------------------
 

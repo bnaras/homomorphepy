@@ -145,7 +145,7 @@ class TestUnreachableIsNotNonEvaluable:
         down = _Unreachable("Down", [2.0])
         m = make_threshold_master("UM", ccm, [good, down])
         with pytest.raises(SiteUnavailable, match="n-of-n"):
-            m.decrypt(good.params.encrypt(1.0))
+            m.decrypt(good.encrypt(1.0))
 
 
 class TestPublicParamsCarryNoSecret:
@@ -251,8 +251,8 @@ class TestForeignCiphertexts:
         make_threshold_master("TM", ccm, [t1, t2])
 
         with pytest.raises(KeyMismatch):
-            o1.partial_decrypt(t1.params.encrypt(1.0), lead=True)
-        o1.partial_decrypt(o1.params.encrypt(1.0), lead=True)  # its own: fine
+            o1.partial_decrypt(t1.encrypt(1.0), lead=True)
+        o1.partial_decrypt(o1.encrypt(1.0), lead=True)  # its own: fine
 
 
 class TestMasterConstruction:
