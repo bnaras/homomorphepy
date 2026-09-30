@@ -19,11 +19,10 @@ outside the hospital, and the lab's coefficients never reach the
 hospital in cleartext. Both are necessary for a model-as-a-service
 deployment that does not trust the lab with patient data.
 
-Neither is sufficient. The hospital can query the lab repeatedly with
-chosen inputs and recover the coefficients by solving the resulting
-linear system -- for a linear model, five well-chosen queries suffice.
-:func:`extract_model` demonstrates that, because a security claim that
-is only ever stated is not a claim a reader can check.
+Neither is sufficient. The hospital decides what it encrypts, so it can
+submit the standard basis as queries: for a linear model with four
+biomarkers and a bias, five queries recover every coefficient.
+:func:`extract_model` runs that attack through the encrypted pipeline.
 """
 
 from __future__ import annotations
@@ -68,6 +67,33 @@ def _risk_band(score: float) -> str:
     return "LOW"
 
 
+def _hospital_context():
+    """The hospital's CKKS context, key pair and packing codec."""
+    # Depth 2 covers the multiply plus the rescale the sum needs.
+    ctx = fhe_context("CKKS", multiplicative_depth=2, scaling_mod_size=50, batch_size=8)
+    keys = ctx.KeyGen()
+    # Keys for multiplying two encrypted values. The scoring below
+    # multiplies encrypted values only by the lab's cleartext weights,
+    # which does not use them.
+    ctx.EvalMultKeyGen(keys.secretKey)
+    return ctx, keys, packed_codec(ctx)
+
+
+def _lab_score(cts: list[Ct]) -> Ct:
+    """The lab's model applied to four encrypted biomarker vectors.
+
+    Reads exactly like the cleartext expression. The weights stay in
+    this function; the caller never reads them.
+    """
+    return (
+        cts[0] * LAB_WEIGHTS[0]
+        + cts[1] * LAB_WEIGHTS[1]
+        + cts[2] * LAB_WEIGHTS[2]
+        + cts[3] * LAB_WEIGHTS[3]
+        + LAB_BIAS
+    )
+
+
 @dataclass
 class InferenceResult:
     scores_encrypted: list[float]
@@ -84,11 +110,7 @@ def run() -> InferenceResult:
     n = len(biomarkers[0])
 
     # -- hospital: context, keys, and encryption ---------------------
-    # Depth 2 covers the multiply plus the rescale the sum needs.
-    ctx = fhe_context("CKKS", multiplicative_depth=2, scaling_mod_size=50, batch_size=8)
-    keys = ctx.KeyGen()
-    ctx.EvalMultKeyGen(keys.secretKey)
-    codec = packed_codec(ctx)
+    ctx, keys, codec = _hospital_context()
 
     # One encrypted value per biomarker, patients across the slots.
     cts = [
@@ -97,15 +119,7 @@ def run() -> InferenceResult:
     ]
 
     # -- lab: evaluate the model without decrypting ------------------
-    # Reads exactly like the cleartext expression, which is the point
-    # of the operator wrapper.
-    score_ct = (
-        cts[0] * LAB_WEIGHTS[0]
-        + cts[1] * LAB_WEIGHTS[1]
-        + cts[2] * LAB_WEIGHTS[2]
-        + cts[3] * LAB_WEIGHTS[3]
-        + LAB_BIAS
-    )
+    score_ct = _lab_score(cts)
 
     # -- hospital: decrypt -------------------------------------------
     pt = ctx.Decrypt(score_ct.raw, keys.secretKey)
@@ -123,28 +137,35 @@ def run() -> InferenceResult:
     )
 
 
-def extract_model(n_queries: int = 5) -> dict[str, object]:
-    """Recover the lab's coefficients from black-box query access.
+def extract_model() -> dict[str, object]:
+    """Recover the lab's coefficients through the encrypted pipeline.
 
-    The attack the protocol does not prevent. The hospital submits
-    chosen biomarker vectors, observes the returned scores, and solves
-    the linear system. For a linear model with four weights and a bias,
-    five linearly independent queries determine it exactly.
-
-    Runs in the clear here: encryption is irrelevant to the attack,
-    which is precisely the point. The lab's protection against it is
-    rate limiting, query auditing, or a non-linear model -- not FHE.
+    The attack the protocol does not prevent. The hospital encrypts the
+    standard basis as five probes packed across slots 1-5 of the four
+    biomarker vectors: slot 1 is all zeros and returns ``b``; slot
+    ``j + 1`` has a one in position ``j`` and returns ``w_j + b``. The
+    lab scores them as it would any patients, and the hospital
+    decrypts. Subtracting the first score from the others recovers the
+    weights. A linear function of ``k`` inputs is determined by any
+    ``k + 1`` affinely independent evaluations, so five queries
+    suffice.
     """
-    rng = np.random.default_rng(20260805)
-    X = rng.normal(size=(n_queries, len(LAB_WEIGHTS)))
-    y = X @ np.array(LAB_WEIGHTS) + LAB_BIAS
+    ctx, keys, codec = _hospital_context()
+    k = len(LAB_WEIGHTS)
+    probes = np.zeros((k, k + 1))
+    probes[np.arange(k), np.arange(1, k + 1)] = 1.0
 
-    design = np.column_stack([X, np.ones(n_queries)])
-    solution, *_ = np.linalg.lstsq(design, y, rcond=None)
+    cts = [
+        Ct(ctx.Encrypt(keys.publicKey, codec.encode(row.tolist())), ctx.cc)
+        for row in probes
+    ]
+    pt = ctx.Decrypt(_lab_score(cts).raw, keys.secretKey)
+    scores = np.asarray(codec.decode(pt, k + 1), dtype=float)
 
-    recovered_w, recovered_b = solution[:-1], float(solution[-1])
+    recovered_b = float(scores[0])
+    recovered_w = scores[1:] - recovered_b
     return {
-        "n_queries": n_queries,
+        "n_queries": k + 1,
         "recovered_weights": recovered_w.tolist(),
         "recovered_bias": recovered_b,
         "max_weight_error": float(np.max(np.abs(recovered_w - np.array(LAB_WEIGHTS)))),
@@ -163,4 +184,4 @@ if __name__ == "__main__":  # pragma: no cover
     print(f"model extraction with {a['n_queries']} queries:")
     print(f"  max weight error : {a['max_weight_error']:.2e}")
     print(f"  bias error       : {a['bias_error']:.2e}")
-    print("  the coefficients are recoverable; FHE does not prevent this")
+    print("  the coefficients are recoverable through the encrypted pipeline")

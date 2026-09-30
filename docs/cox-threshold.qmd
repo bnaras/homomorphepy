@@ -19,15 +19,10 @@ sum of the site contributions because the protocol never sends it
 anything else — not because it *could not* decrypt an individual
 contribution if it received one.
 
-That assumption is often the hardest one to sell. A consortium of
-hospitals can usually agree on a statistical method faster than it can
-agree on which member gets to hold the key.
-
-Threshold key generation removes the assumption rather than arguing
-about it. The sites jointly generate a key so that no single party
-holds the joint secret, and the master's role narrows to what its name
-should have been all along: an **aggregator**. It adds encrypted values
-and orchestrates the decryption ceremony. It cannot decrypt.
+Threshold key generation removes the assumption. The sites jointly
+generate a key so that no single party holds the joint secret, and the
+master becomes an **aggregator**: it adds encrypted values and
+coordinates the decryption. It cannot decrypt alone.
 
 The statistics do not change at all. Same cohort, same partial
 likelihood, same optimizer, same coefficients. Only who can read what.
@@ -41,12 +36,11 @@ report their true local log-likelihood, but they would read anything
 they were shown. Each holds one secret-key share and its own patients'
 records.
 
-**The aggregator** is *fully untrusted*. It holds no secret-key
-material of any kind. It receives encrypted contributions, adds them,
-collects partial decryptions, and fuses them. At no point in the
-protocol does it possess enough to decrypt an individual site's value,
-and this is a property of the key material rather than of its
-behavior — a dishonest aggregator gains nothing by deviating.
+**The aggregator** holds no secret-key material. It receives the
+encrypted contributions, adds them, and sends the sum back to the
+sites for partial decryption. The encrypted values it handles tell it
+nothing on their own. Decrypting anything, an individual contribution
+included, takes a partial decryption from every site.
 
 **The channel** is assumed authenticated but readable. Everything that
 crosses it is encrypted under the joint public key.
@@ -248,13 +242,13 @@ changed and the answer did not.
    decryptable alone.
 3. Partial decryptions $\rho_i$ contributed by each site. Not
    decryptable individually.
-4. After fusion, the *sum in the clear* $\ell(\beta) = \sum_i \ell_i$.
-   This appears at the aggregator only at this point, and only as a
-   total.
+4. After combining the partial decryptions, the sum
+   $\ell(\beta) = \sum_i \ell_i$ in the clear.
 
-The sites are honest-but-curious among themselves and toward the
-aggregator; the aggregator holds no secret-key material and is fully
-untrusted.
+Step 4 reveals $\ell(\beta)$ to the aggregator, which is what the
+master saw on the [distributed Cox](cox.qmd) page. The difference is
+that no single party can decrypt an individual contribution or any
+intermediate value. That takes a partial decryption from every site.
 
 ## Limitations
 
@@ -270,7 +264,14 @@ it discloses is the subject of the
 [differential privacy](dp.qmd) page.
 
 **Honest-but-curious only.** A site reporting a false $\ell_i$ shifts
-the fit and nothing in the protocol notices.
+the fit and nothing in the protocol notices. A site could also submit
+a corrupted partial decryption to break the fit; detecting that needs
+additional protocol machinery (commitments, zero-knowledge proofs)
+that this example does not implement.
+
+**Output privacy is unchanged.** The released coefficients
+$\hat\beta$ are the same as the cleartext fit. Output-level attacks
+(membership inference, model inversion) remain in scope.
 
 **Key generation is a ceremony.** It happens once, but it happens
 out-of-band and every site must be present for it. In a real deployment

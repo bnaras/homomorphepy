@@ -1,9 +1,9 @@
 """Differential privacy layered on the encrypted protocols.
 
 **This is a demonstration of what happens if you add DP, not a
-recommendation.** The lossless threshold-FHE protocols are the main
-story; they release the exact aggregate and leak nothing else. DP
-releases a *deliberately corrupted* aggregate to bound what repeated
+recommendation.** The threshold-FHE protocols without noise are the
+main path; what they reveal is the exact aggregate at each query. DP
+releases a *deliberately perturbed* aggregate to bound what repeated
 queries reveal, and the cost of that is the subject here.
 
 The mechanism
@@ -74,8 +74,8 @@ step on a *function-value* decrease alone is less fragile here, and a
 gradient-free one has no such condition to satisfy at all.
 
 Both are properties of the mechanism meeting the optimizer, not
-defects in the protocol: the protocol releases exactly what it
-promises.
+defects in the protocol: it releases ``l(beta) + N(0, sigma^2)`` at
+every query, as intended.
 
 On randomness
 -------------

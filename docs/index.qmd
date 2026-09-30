@@ -94,7 +94,7 @@ terms.
 
 ## The shortest complete example
 
-Three sites, each holding a private count, and a aggregator that
+Three sites, each holding a private count, and an aggregator that
 learns only the total:
 
 ```{python}

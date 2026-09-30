@@ -22,8 +22,9 @@ first — which would defeat the exercise.
 
 A Chebyshev polynomial approximation closes the gap. The linear
 predictor *and* the sigmoid are evaluated while the data stays
-encrypted, so the researcher never sees a patient and the hospital
-never sees a coefficient.
+encrypted, so the researcher never sees a patient. The hospital
+decrypts the predictions but is not sent the coefficients; see the
+caveat at the end.
 
 The scheme is CKKS, since the quantities are real-valued.
 
@@ -85,11 +86,11 @@ pd.DataFrame({
 
 ## What this costs
 
-Depth is the currency. The linear example needed a precision budget of
-2; the Chebyshev polynomial needs 8, because every multiplication in it
-spends one level. That is the whole reason the context above is
-configured differently, and it is the constraint to think about before
-reaching for any non-polynomial function under encryption.
+Each multiplication uses one level of the multiplicative depth set in
+the context. The linear example needed a depth of 2; the Chebyshev
+polynomial needs 8. That is why the context above is configured
+differently, and deeper computations need larger parameters and more
+memory.
 
 The approximation interval matters just as much. The sigmoid is fitted
 on $[-4, 4]$, which has to cover the range the linear predictor can
@@ -101,11 +102,18 @@ numbers simply stop being probabilities.
 
 The transport guarantee is the same as secure inference: patient values
 never appear in the clear outside the hospital, and the coefficients
-never leave the researcher.
+are not sent to the hospital.
 
 The caveat is the same too. The hospital holds the secret key and
-chooses the queries, so it can probe the model and recover its
-parameters. The sigmoid makes the recovery less trivial than solving a
-linear system, but it does not prevent it. Rate limiting, query
-auditing, or output differential privacy are what address that;
-encryption is not.
+chooses the queries, so it can recover the coefficients from
+predictions on chosen inputs. The sigmoid makes this harder than in
+the linear case but does not prevent it. A deployment would need
+further protection, such as output differential privacy, query limits,
+or threshold FHE.
+
+**Approximation error.** CKKS is approximate, and so is the Chebyshev
+fit. For deployment, precision would need to be validated for the use
+case.
+
+**Performance.** Encrypted computation is orders of magnitude slower
+than cleartext.

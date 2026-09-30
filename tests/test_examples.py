@@ -246,6 +246,8 @@ class TestSecureInference:
         # transit; it does not protect the model from query access.
         from homomorphepy.examples.secure_inference import extract_model
 
-        a = extract_model(n_queries=5)
-        assert a["max_weight_error"] < 1e-9
-        assert a["bias_error"] < 1e-9
+        a = extract_model()
+        # Through CKKS, so to CKKS precision rather than exactly.
+        assert a["n_queries"] == 5
+        assert a["max_weight_error"] < 1e-6
+        assert a["bias_error"] < 1e-6

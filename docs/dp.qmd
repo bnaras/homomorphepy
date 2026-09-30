@@ -13,10 +13,12 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 ::: {.callout-important}
 ## A demonstration, not a recommendation
 
-The threshold-FHE protocols in the other examples are *lossless*: they
-release the exact aggregate and leak nothing else. Differential
-privacy releases a deliberately corrupted aggregate, to bound what
-repeated queries can reveal. This page shows what that costs. It is
+The threshold-FHE Cox fit of [Cox with threshold keys](cox-threshold.qmd)
+matches the cleartext fit, no single party can decrypt, and the
+aggregator sees only the joint log-likelihood $\ell(\beta)$ at each
+optimizer query. Those values are what the protocol reveals.
+Differential privacy releases a deliberately perturbed aggregate, to
+bound what repeated queries can reveal. This page shows what that costs. It is
 not advice to add it.
 :::
 
@@ -29,8 +31,8 @@ at any point — an aggregator that is compromised sees encrypted
 *already noised* contributions.
 
 That is the only change to the site function. Everything else — the
-threshold keys, the aggregation, the optimizer — is the [Cox
-example](cox.qmd) unmodified:
+threshold keys, the aggregation, the optimizer — is the [threshold Cox
+example](cox-threshold.qmd) unmodified:
 
 ```{python}
 import numpy as np
@@ -218,8 +220,8 @@ optimizer that infers derivatives by differencing nearby function
 values will meet this failure mode against any DP mechanism adding
 enough noise to be meaningful.
 
-None of this is a defect in the cryptographic protocol. The protocol
-releases exactly what it promises.
+The encryption is not involved: the protocol releases
+$\ell(\beta) + \mathcal{N}(0, \sigma^2)$ at every query, as intended.
 
 ## The same mechanism on consensus ADMM
 

@@ -8,11 +8,11 @@ logistic model needs the sigmoid
 which is not a polynomial, and encrypted arithmetic offers only
 addition and multiplication. A Chebyshev approximation closes that gap:
 the linear predictor *and* the sigmoid are evaluated without ever
-decrypting, so the hospital never sees the coefficients and the
-researcher never sees the patients.
+decrypting, so the researcher never sees the patients. The hospital
+decrypts the predictions but is not sent the coefficients.
 
-The cost is paid in precision budget. Every multiplication in the
-polynomial spends one level, which is why the context below asks for
+The cost is multiplicative depth. Every multiplication in the
+polynomial uses one level, which is why the context below asks for
 depth 8 where the linear example needed 2.
 
 Where the numbers come from

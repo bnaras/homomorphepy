@@ -12,7 +12,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 ## The statistical problem
 
-The Cox proportional hazards model is one of the workhorses of medical
+The Cox proportional hazards model is widely used in medical
 statistics. Given covariates $x_i$ for subject $i$, an event time
 $t_i$, and an event indicator $\delta_i$, the hazard is modeled as
 
@@ -39,15 +39,13 @@ $$
 \ell(\beta) \;=\; \sum_{s=1}^{S} \ell_s(\beta).
 $$
 
-This additive decomposition is exactly what we need for a
-privacy-preserving distributed protocol. The same decomposition
-underlies the master/worker architecture used by `distcomp`,
-`DataSHIELD`, and `WebDISCO`: a central master broadcasts the current
-$\beta$, each site computes its local $\ell_s(\beta)$ on its private
-data, and the master combines the local contributions. We adopt the
-same topology, with the encrypted-aggregation step performed under
-CKKS so that the master sees only the *sum* of local contributions
-and not the individual addends.
+Because the log-likelihood is a sum over strata, each site can
+compute its own term. The master/worker setup used by `distcomp`,
+`DataSHIELD`, and `WebDISCO` relies on this: a master sends the
+current $\beta$ to the sites, each site computes $\ell_s(\beta)$ on
+its own data, and the master adds the results. We use the same setup,
+but the sites encrypt their terms under CKKS, so the master sees only
+the sum and not the individual terms.
 
 ## DLBCL lymphoma cohort
 
@@ -57,12 +55,9 @@ distributed Cox estimation, excluding the five patients with zero
 follow-up time.
 
 The model is a function of five expression signatures, stratified by
-molecular subgroup — GCB, ABC and Type III — and *the subgroup itself
-is the site boundary*. This is biologically and operationally
-realistic: the three subgroups arise from different cells of origin,
-have systematically different prognosis, and tend to be diagnosed at
-different referral centers. The sites are imbalanced in size, as real
-ones are.
+molecular subgroup — GCB, ABC and Type III — and we treat each
+subgroup as a site. The three sites differ in size; the protocol does
+not require equal sizes.
 
 ```{python}
 from homomorphepy import load_dlbcl, site_order
@@ -134,18 +129,26 @@ master.set_workers(workers)
 master
 ```
 
-The scaling parameters are lifted from the defaults because the summed
-stratified log-likelihood on this cohort is large, and CKKS precision
-is relative to the value being encrypted:
-
 ```{python}
 #| echo: false
 from IPython.display import Markdown
 
-_ll_scale = abs(sum(local_cox_nll(d, np.zeros(len(COVARIATES)))
-                    for d in sites.values()))
-Markdown(f"The pooled objective at $\\beta = 0$ is "
-         f"about {_ll_scale:.0f} in magnitude.")
+_beta_mle = PHReg(
+    df["time"].to_numpy(dtype=float),
+    np.column_stack([df[c].to_numpy(dtype=float) for c in COVARIATES]),
+    status=df["status"].to_numpy(dtype=int),
+    strata=df["Subgroup"].cat.codes.to_numpy(),
+    ties="efron",
+).fit().params
+_nll_0 = sum(local_cox_nll(d, np.zeros(len(COVARIATES))) for d in sites.values())
+_nll_mle = sum(local_cox_nll(d, _beta_mle) for d in sites.values())
+Markdown(
+    f"The summed negative log-likelihood on this cohort is {_nll_0:.0f} "
+    f"at $\\beta = 0$ and {_nll_mle:.0f} at the MLE. CKKS represents "
+    "values of this size at the default scaling parameters. We raise "
+    "`scaling_mod_size` from 50 to 59 for extra precision and set "
+    "`first_mod_size = 60`, the library default, explicitly."
+)
 ```
 
 The master sees the *sum* of the local contributions and never an

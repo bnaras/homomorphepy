@@ -93,17 +93,7 @@ total). With a single-decrypter master, the master *could* decrypt
 individual $E(\ell_i)$ in principle; the cryptographic story
 strengthens when paired with threshold key generation, where no single
 party holds the secret key. That is revisited in
-[Cox regression](cox.qmd).
-
-## Why CKKS
-
-Paillier, the classic additively homomorphic scheme, is purely
-*additive*. Real-valued log-likelihoods had to be split into integer and
-fractional parts and rationally approximated with a denominator of
-$2^{256}$. CKKS encrypts real numbers natively and the protocol
-becomes much cleaner: each step is just `+` between two encrypted
-values.
-CKKS also supports multiplication, which the Cox example needs.
+[Cox with threshold keys](cox-threshold.qmd).
 
 ## Implementation
 
@@ -256,12 +246,11 @@ CKKS's and the $1/h$ amplification does real damage.
 
 ## Beyond MLE
 
-For Poisson MLE the protocol uses only additions, so even the purely
-additive Paillier scheme suffices. CKKS is a clean improvement but not
-strictly necessary here. The story changes for likelihoods that need
-products or higher-order statistics — [distributed Cox
-regression](cox.qmd), for example — where CKKS's multiplicative
-homomorphism becomes a prerequisite.
+For Poisson MLE the protocol only adds encrypted values. The same
+holds for stratified [Cox regression](cox.qmd), where the sites'
+partial log-likelihoods are summed. Multiplying encrypted values is
+needed only when the computation itself runs on encrypted data, as in
+the sigmoid of [encrypted logistic prediction](encrypted-regression.qmd).
 
 ## Caveat
 

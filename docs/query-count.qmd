@@ -11,7 +11,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 ## The problem
 
-Several sites each hold a private table of patient records. A
+Several sites each hold a private table of patient records. An
 aggregator wants the answer to a single aggregate query — *how many
 patients across all sites satisfy some condition?* — without any site
 revealing its own records, and without the aggregator learning any
@@ -71,36 +71,13 @@ scheme lets anyone compute $E(c_1) + E(c_2) + E(c_3) = E(c_1 + c_2 +
 c_3)$ without decrypting the parts.
 
 The historical difficulty was not the arithmetic but the *trust
-model*. The Paillier cryptosystem, the classic choice for exactly this
-kind of aggregation, has a **single private key**. Whoever holds it
-can decrypt anything — including a lone $E(c_i)$. So if the
-aggregator holds the key, it can read each site's count individually,
-defeating the purpose.
+model*. Whoever holds the private key can decrypt anything — including
+a lone $E(c_i)$. So if the aggregator holds the key, it can read each
+site's count individually, defeating the purpose.
 
 The workaround was two **non-cooperating parties**, NCP1 and NCP2, who
-do not collude. Each site draws a fresh random $r_i$ and sends the two
-additive shares
-
-$$
-E(c_i - r_i) \;\longrightarrow\; \text{NCP1},
-\qquad
-E(c_i + r_i) \;\longrightarrow\; \text{NCP2}.
-$$
-
-NCP1 sums its shares to get $E\!\left(\sum_i (c_i - r_i)\right)$ and
-NCP2 gets $E\!\left(\sum_i (c_i + r_i)\right)$; neither total means
-anything on its own because of the random masks. The aggregator adds
-the two encrypted totals, the masks cancel, and it decrypts
-
-$$
-\textstyle\sum_i (c_i - r_i) + \sum_i (c_i + r_i)
-  \;=\; \sum_i 2c_i \;=\; 2c,
-$$
-
-recovering the grand total $c$ after halving. No party ever sees an
-individual $c_i$. This works, but it is machinery erected to
-compensate for a single-key scheme: two extra parties, a
-non-collusion assumption between them, and a masking dance.
+do not collude, each receiving a randomly masked share of every
+site's count.
 
 ## Threshold encryption removes the need for masking
 
@@ -228,25 +205,24 @@ result = query_count.run()
 result.total_encrypted, result.total_cleartext, result.exact
 ```
 
-## Discussion
+## Summary
 
-- **The trust improvement is structural.** No single party holds a
-  decryption key, so no single party — aggregator or site — can
-  decrypt an individual site's count. This is a stronger guarantee
-  than the Paillier scheme's, and it is achieved without the two
-  non-cooperating parties, the non-collusion assumption, or the random
-  masking the single-key scheme required.
-- **Only the aggregate is ever revealed.** The sites jointly decrypt
-  the total and nothing else. Individual counts are never decrypted by
-  anyone, because doing so would require all the secret shares to be
-  brought together for that specific encrypted value — which the
-  protocol never does.
-- **BFV gives exact counts.** For integer-valued aggregates — counts,
+- No single party holds a decryption key, so no single party —
+  aggregator or site — can decrypt an individual site's count.
+- Only the aggregate is ever revealed. The sites jointly decrypt the
+  total and nothing else.
+- BFV gives exact counts. For integer-valued aggregates — counts,
   sums, contingency-table cells — BFV decrypts to the exact integer.
-  The exactness that the original Paillier demonstration offered is
-  retained; the trust model is what improved.
-- **Honest-but-curious parties.** As with the other distributed
-  protocols here, sites are assumed to follow the protocol. A
-  malicious site could submit a wrong count or a corrupted partial
-  decryption; detecting that requires verifiable decryption, which is
-  beyond this demonstration.
+- BFV arithmetic is modular. A value the scheme cannot carry — a
+  non-integer, a non-finite value, or one at or beyond
+  `plaintext_modulus / 2` — is refused when the site encrypts it,
+  rather than being rounded or wrapped silently. What no party can
+  check is the *total*: a sum that exceeds the modulus wraps, and the
+  wrapped value decrypts as an ordinary integer with nothing to mark
+  it as wrong. The remedy is to choose `plaintext_modulus` for the
+  largest total the protocol can produce, not for the largest single
+  contribution.
+- As with the other distributed protocols here, sites are assumed to
+  follow the protocol. A malicious site could submit a wrong count or
+  a corrupted partial decryption; detecting that requires verifiable
+  decryption, which is beyond this demonstration.

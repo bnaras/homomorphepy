@@ -154,20 +154,3 @@ relies on the aggregator only ever seeing the sum.
 There the key is generated n-of-n, split across the sites, so the
 aggregator cannot decrypt anything alone. Same computation, and the
 guarantee stops depending on what the aggregator chooses to look at.
-
-## What BFV brings over an additive-only scheme
-
-Paillier, the classic choice for this kind of aggregation, supports
-only additive homomorphism. With BFV:
-
-- **Multiplication** is available — encrypted products, variances,
-  more complex integer-valued aggregates.
-- **Performance** — OpenFHE's optimized C++ backend is orders of
-  magnitude faster than a big-integer Paillier implementation.
-- **Packing** — BFV encrypts whole integer vectors, and one
-  arithmetic operation acts on every position at once. Several
-  per-site counts can therefore ride in the slots of a single
-  encrypted value and be aggregated together.
-- **Threshold FHE** — the secret key can be split across parties so no
-  single party can decrypt unilaterally, which is what
-  [query counting](query-count.qmd) uses.

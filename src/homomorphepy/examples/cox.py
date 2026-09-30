@@ -6,11 +6,9 @@ from a single-decrypter CKKS master to an n-of-n threshold one.
 :func:`run` takes ``backend`` and the rest of the protocol is
 untouched.
 
-The setting is the Rosenwald DLBCL cohort, with the molecular subgroup
-used as the site boundary -- GCB, ABC and Type III arise from different
-cells of origin and tend to be diagnosed at different referral centers,
-so the split is operationally realistic rather than arbitrary. The
-three sites are imbalanced (115 / 71 / 49), which is also realistic.
+The setting is the Rosenwald DLBCL cohort, with each molecular
+subgroup -- GCB, ABC and Type III -- treated as a site. The three sites
+differ in size; the protocol does not require equal sizes.
 
 Each site computes its own Cox partial log-likelihood at the current
 coefficient vector and never shares patient rows. The site-level
@@ -46,9 +44,10 @@ __all__ = ["COVARIATES", "FTOL", "CoxResult", "local_cox_nll", "run"]
 
 COVARIATES = ["GCB_sig", "LN_sig", "Prolif_sig", "BMP6", "MHC2_sig"]
 
-# The summed stratified Cox nLL on this cohort has magnitude ~5e2, and
-# CKKS precision is relative to the encrypted value, so scaling_mod_size
-# is lifted from 50 to 59 with first_mod_size 60 for margin.
+# CKKS represents the summed stratified Cox nLL on this cohort at the
+# default scaling parameters; scaling_mod_size is raised from 50 to 59
+# for extra precision, and first_mod_size = 60, the library default, is
+# set explicitly. The cox page prints the nLL at beta = 0 and at the MLE.
 CKKS_PARAMS = dict(
     multiplicative_depth=1, scaling_mod_size=59, first_mod_size=60, batch_size=8
 )
