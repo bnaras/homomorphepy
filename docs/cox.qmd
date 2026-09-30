@@ -49,10 +49,9 @@ the sum and not the individual terms.
 
 ## DLBCL lymphoma cohort
 
-We use the diffuse large-B-cell lymphoma cohort of Rosenwald et al.
-(2002), the same dataset Bayle et al. (2025) use to motivate
-distributed Cox estimation, excluding the five patients with zero
-follow-up time.
+We use the diffuse large-B-cell lymphoma cohort of @Rosenwald2002, the
+same dataset @BayleFanLou2025 use to motivate distributed Cox
+estimation, excluding the five patients with zero follow-up time.
 
 The model is a function of five expression signatures, stratified by
 molecular subgroup — GCB, ABC and Type III — and we treat each

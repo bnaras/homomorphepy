@@ -24,10 +24,11 @@ not advice to add it.
 
 ## The mechanism
 
-Each of the $N$ sites adds $\mathcal{N}(0, \sigma^2/N)$ to its own
-contribution *before encrypting*, so the decrypted aggregate carries
-$\mathcal{N}(0, \sigma^2)$ exactly. Nobody holds the noiseless value
-at any point — an aggregator that is compromised sees encrypted
+The Gaussian mechanism [@DworkRoth2014, §3.5.3] releases the aggregate
+plus $\mathcal{N}(0, \sigma^2)$. Each of the $N$ sites adds
+$\mathcal{N}(0, \sigma^2/N)$ to its own contribution *before
+encrypting*, so the decrypted aggregate carries $\mathcal{N}(0, \sigma^2)$
+exactly. No party holds the noiseless aggregate at any point — an aggregator that is compromised sees encrypted
 *already noised* contributions.
 
 That is the only change to the site function. Everything else — the
@@ -53,7 +54,7 @@ def make_noisy_local(sigma, n_sites, rng):
 
 ## The accounting
 
-Composition is zero-concentrated DP: a Gaussian release is
+Composition is zero-concentrated DP [@BunSteinke2016]: a Gaussian release is
 $\rho = (\Delta/\sigma)^2/2$-zCDP, $T$ queries compose to $T\rho$, and
 $\varepsilon = \rho + 2\sqrt{\rho\log(1/\delta)}$.
 

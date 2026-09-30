@@ -66,8 +66,9 @@ y1, y2, y3 = y[:20], y[20:27], y[27:]
 
 ## The protocol
 
-We use the **master/worker** topology that distcomp- and
-DataSHIELD-style federated analyses actually deploy: a star with the
+We use the **master/worker** topology that federated analyses such as
+distcomp [@NarasimhanRubinGrossBenderskyLavori2017; @distcomp] and
+DataSHIELD [@WolfsonDataSHIELD2010; @GayeDataSHIELD2014] deploy: a star with the
 master at the center and one independent worker per site. There is no
 chain and no inter-site communication.
 

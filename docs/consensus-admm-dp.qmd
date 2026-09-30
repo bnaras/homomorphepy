@@ -30,7 +30,7 @@ $$
 $$
 
 where $\ell_i$ is the logistic loss on site $i$. The standard consensus
-split (Boyd, Parikh, Chu, Peleato, Eckstein, 2011) introduces local
+split [@BoydParikhChuPeleatoEckstein2011] introduces local
 copies $x_i \in \mathbb{R}^p$ and a single global consensus
 $z \in \mathbb{R}^p$:
 
@@ -70,7 +70,7 @@ what adding output DP on top costs.
 Given a query $f: \mathcal{D} \to \mathbb{R}^p$, the **Gaussian
 mechanism** releases $\tilde f(D) = f(D) + \mathcal{N}(0, \sigma^2 I)$.
 Sensitivity-driven $\sigma$ gives single-query $(\varepsilon, \delta)$
-DP. Multi-query composition uses **zCDP** (Bun and Steinke, 2016): each
+DP. Multi-query composition uses **zCDP** [@BunSteinke2016]: each
 release is $(\Delta/\sigma)^2/2$-zCDP; $T$ releases compose linearly to
 $T \cdot \rho$; convert back to $(\varepsilon, \delta)$ via
 $\varepsilon = \rho + 2\sqrt{\rho \log(1/\delta)}$.
@@ -454,8 +454,8 @@ Whether that is acceptable depends on the application.
 - **Adaptive noise** schedules across iterations.
 - **Subsampling amplification** of the DP accountant.
 - **Decentralized averaging.** Replacing the aggregator with gossip
-  averaging among the sites can amplify privacy (Cyffers, Even,
-  Bellet, and Massoulié, 2022). This protocol keeps a central
+  averaging among the sites can amplify privacy
+  [@CyffersEvenBelletMassoulie2022]. This protocol keeps a central
   aggregator.
 - **Malicious-site protection.** A hostile site can corrupt either its
   $(x_i + u_i)$ or its noise draw; out of scope.

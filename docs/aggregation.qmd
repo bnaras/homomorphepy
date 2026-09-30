@@ -66,7 +66,7 @@ codec = packed_codec(cc)
 In a real deployment the aggregator distributes the public key (and
 the serialized context) to each site. The secret key stays with the
 aggregator. We simulate this in one process by sharing `cc` and `pk`
-locally.
+locally; serializing them for a real deployment is shown below.
 
 ## Each site computes locally and encrypts
 
@@ -121,7 +121,7 @@ the aggregator never sees, were:
 [len(df.query(QUERY)) for df in site_data]
 ```
 
-## What just happened
+## The details of what happened
 
 1. The aggregator created an encryption context and distributed the
    **public key** to all sites.
@@ -134,6 +134,32 @@ the aggregator never sees, were:
 
 No site revealed its individual count. The aggregator never saw any
 patient-level data. The total is exact.
+
+## Serializing for a real distributed protocol
+
+In a real deployment each site needs the aggregator's context and
+public key. OpenFHE provides serialization:
+
+```{python}
+import tempfile
+from pathlib import Path
+
+import openfhe
+
+tdir = Path(tempfile.mkdtemp())
+openfhe.SerializeToFile(str(tdir / "context.bin"), cc.cc, openfhe.BINARY)
+openfhe.SerializeToFile(str(tdir / "pubkey.bin"), pk, openfhe.BINARY)
+
+# At a site: read the context and the public key, encrypt a count.
+cc_remote, _ = openfhe.DeserializeCryptoContext(str(tdir / "context.bin"), openfhe.BINARY)
+pk_remote, _ = openfhe.DeserializePublicKey(str(tdir / "pubkey.bin"), openfhe.BINARY)
+ct = cc_remote.Encrypt(pk_remote, cc_remote.MakePackedPlaintext([42]))
+openfhe.SerializeToFile(str(tdir / "site_count.bin"), ct, openfhe.BINARY)
+
+# At the aggregator: read the encrypted count and decrypt it.
+ct_received, _ = openfhe.DeserializeCiphertext(str(tdir / "site_count.bin"), openfhe.BINARY)
+codec.decode(cc.Decrypt(ct_received, sk), 1)[0]
+```
 
 ## The same run, in one call
 

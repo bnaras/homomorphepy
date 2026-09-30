@@ -19,23 +19,37 @@ of them revealing their data, using homomorphic encryption via
 
 Version `{python} homomorphepy.__version__`, wrapping OpenFHE 1.5.1.
 
-## The idea
+## The problem this package addresses
 
-Several sites hold data they will not share. They are willing to
-compute a *joint* result, provided no party — including whoever
-coordinates the computation — learns anything about an individual
-site's contribution.
+A recurring situation in biomedical research: several sites hold
+patient records that cannot leave the institutions that collected
+them, and one would like to fit a single model to the pooled data.
 
-Each site computes a summary of its own data, encrypts it, and sends
-the encrypted value. The aggregator adds those encrypted values
-*without decrypting them* and recovers only the total. Under threshold keys the
-guarantee is stronger still: the decryption key is split across the
-sites, so no single party can decrypt anything at all.
+It is well known that for many models fit to row-partitioned data this
+is easy to do. The log-likelihood, the score, and the information
+matrix are all *sums over observations*, so they are also sums over
+sites. An optimizer fitting such a model never needs an individual
+record — it needs the total of the per-site contributions at whatever
+parameter value it is currently considering. If the sites can compute
+that total without revealing their individual contributions, the fit
+proceeds exactly as it would on pooled data.
 
-What makes this practical for statistics is that the analysis code
-does not change. An optimizer handed an objective that happens to
-route through encryption converges to the same estimate it would have
-reached on pooled data.
+Homomorphic encryption is what makes the total computable. It is a
+form of encryption under which certain arithmetic still works: you can
+add two encrypted numbers and get an encryption of their sum, without
+decrypting either one. The party doing the adding learns nothing.
+Under threshold keys the decryption key is also split across the
+sites, so no single party can decrypt anything alone.
+
+`homomorphepy` supplies the coordination layer — the sites, the
+aggregator, and the protocol connecting them — on top of the
+encryption provided by OpenFHE.
+
+The point worth keeping in view is that **the statistical machinery
+does not change**. The examples here fit Cox models with statsmodels'
+partial likelihood and `scipy.optimize.minimize`, and penalized
+regression with cvxpy, all unmodified. Only the function that returns
+the summary at each iteration is different.
 
 ## Terms you will meet
 
@@ -118,6 +132,127 @@ only the sum. BFV is exact integer arithmetic, so the answer is the integer
 and not an approximation of it. Everything else here is this idea with
 more statistics on top.
 
+## How the pieces fit together
+
+Three objects are the building blocks for the protocol.
+
+A **site** is built with `make_worker()`. It holds the site's data and
+a function `local_fn(data, theta)` returning that site's summary at the
+parameter value `theta`. If a parameter value breaks the computation —
+an extreme value that the site's solver cannot handle — the function
+returns `None`, and that signal propagates back to the optimizer
+rather than corrupting the fit.
+
+The aggregator reaches every site through one method,
+`site.contribute(theta)`, and what comes back is **already
+encrypted**: the site encrypts with the public parameters it received
+at setup, so no individual site's cleartext contribution ever reaches
+the aggregator. That is why `local_fn` returns a plain number while
+`contribute()` — not you — does the encrypting.
+
+When the records are not in this process, subclass `RemoteSite` and
+give it a `contribute()` method. The package ships no implementation:
+transports differ too much, and a cryptography package has no
+business carrying an HTTP client. The extension is small:
+
+```{python}
+from homomorphepy import RemoteSite
+
+
+class HttpSite(RemoteSite):
+    def __init__(self, name, url):
+        super().__init__(name, None, None)
+        self.url = url
+
+    def contribute(self, theta):
+        # The far side holds the public parameters and encrypts before
+        # replying, so the wire carries encrypted values -- never a
+        # bare number.
+        return fetch_encrypted_contribution(self.url, theta)
+```
+
+`None` and a failure to answer have to be handled differently. In
+these examples `None` means *this* `theta` broke the site's solver, and
+because the examples involve optimization, the optimizer responds by
+trying a different parameter. A network or timeout failure is not
+that, and backing off to another `theta` does nothing about it — raise
+`SiteUnavailable` instead, which aborts the round.
+
+An **aggregator** is built with either `make_ckks_master()` or
+`make_threshold_master()`. The two differ in exactly one respect, and
+it is the respect that matters:
+
+- `make_ckks_master()` creates an aggregator holding an ordinary key
+  pair. It is appropriate when one party is permitted to hold the
+  secret key.
+- `make_threshold_master()` takes the sites and runs threshold key
+  generation through them: each site generates its own share and
+  keeps it, so no single party — including the aggregator itself — can
+  decrypt alone. The aggregator it returns holds only public material,
+  and is already wired to those sites.
+
+Because both are the same kind of object underneath, the protocol body
+is identical for either. Choosing a trust model means choosing a
+constructor, not rewriting the analysis. The one setup difference
+follows from the cryptography rather than the API: a joint public key
+is built *from* the sites, so under threshold keys the sites are
+created first and handed to the constructor, instead of being wired to
+an aggregator afterwards with `set_workers()`.
+
+**`master.aggregate(theta)`** runs one round. The aggregator sends
+`theta` to every site; each site computes its local summary and
+encrypts it; the aggregator adds the encrypted summaries together and
+decrypts only the total. An optimizer calls this once per iteration,
+and the fit proceeds.
+
+The topology is a flat fan-out and fan-in, which is how federated
+analysis frameworks such as distcomp
+[@NarasimhanRubinGrossBenderskyLavori2017; @distcomp] and DataSHIELD
+[@WolfsonDataSHIELD2010; @GayeDataSHIELD2014] are actually deployed.
+
+### Sites that are not in this process
+
+Every example here runs all parties inside one Python process, so that
+each is reproducible by running it. That is a simulation of the
+deployment, not the deployment itself, and it is worth being explicit
+about what changes when the sites are genuinely remote.
+
+The structure does not change. You subclass `RemoteSite` and give it
+whatever your transport needs — an endpoint, a credential, a
+connection object. The object you hold in the aggregator's process is
+a *local handle* for a remote party, not the party itself. Nothing in
+`aggregate()` needs to know the difference.
+
+Two methods correspond to the only two moments anything passes between
+the parties:
+
+- `set_public_params(params)` — setup. Send the public context and
+  key to the endpoint and have it keep them. Only public material
+  travels.
+- `contribute(theta)` — one round. Send `theta`, and get back a value
+  the far end has **already encrypted**.
+
+The ordering in the second one is the whole point: the summary is
+encrypted before it leaves the site, so no individual contribution
+ever exists in the clear outside the site that produced it. Under
+threshold keys two more methods run at the far end, so that the share
+never leaves it: `keygen_round()` during key generation, and
+`partial_decrypt()` at each decryption.
+
+What the package does not supply is everything else a deployment
+needs: transport, authentication, key storage at the endpoint, retry
+and timeout policy, and any defense against a party that actively
+deviates rather than merely observes. The `RemoteSite` docstring states
+the full contract.
+
+## What "the right answer" means
+
+[Precision](precision.qmd) is the companion to this page. It sets out
+what it means for an encrypted result to be correct: exact for integer
+counting, and approximate within a measurable bound for real-valued
+arithmetic. Read it before interpreting any number in the examples
+below.
+
 ## Examples
 
 Grouped by what you are trying to do. Within each group, the simpler
@@ -125,7 +260,9 @@ example comes first.
 
 **Queries and aggregation.** Counting across sites without revealing
 who contributed what. The simplest complete protocols here, and the
-best place to begin.
+best place to begin. The Observational Health Data Sciences and
+Informatics (OHDSI) network [@HripcsakOHDSI2015] would be a platform
+for such queries.
 
 | Example | What it shows |
 |---|---|
@@ -133,7 +270,10 @@ best place to begin.
 | [Query counting](query-count.qmd) | The same count under threshold keys, where nobody can decrypt alone. |
 
 **Fitting models across sites.** Each of these drives an ordinary,
-unmodified fitting routine.
+unmodified fitting routine. The DataSHIELD network
+[@WolfsonDataSHIELD2010; @GayeDataSHIELD2014] and the distcomp package
+[@NarasimhanRubinGrossBenderskyLavori2017; @distcomp] may be platforms
+for such model fitting.
 
 | Example | What it shows |
 |---|---|
@@ -159,10 +299,6 @@ protocols, and the costs differ.
 |---|---|
 | [Cox under DP](dp.qmd) | Noise on a scalar objective, and the optimizer that stops working. |
 | [Consensus ADMM under DP](consensus-admm-dp.qmd) | Noise on the consensus average, with $\rho$ and the iteration count chosen without the data. |
-
-[Precision](precision.qmd) explains what "the encrypted answer matches"
-means for each scheme, and when to expect exactness rather than a
-tolerance.
 
 ## Installing
 
