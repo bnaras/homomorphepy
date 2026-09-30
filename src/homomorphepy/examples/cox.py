@@ -40,7 +40,7 @@ from homomorphepy.actors import (
 from homomorphepy.context import Context, fhe_context
 from homomorphepy.fixtures import load_dlbcl, site_order
 
-__all__ = ["COVARIATES", "FTOL", "CoxResult", "local_cox_nll", "run"]
+__all__ = ["COVARIATES", "FTOL", "CoxResult", "fd_hessian", "local_cox_nll", "run"]
 
 COVARIATES = ["GCB_sig", "LN_sig", "Prolif_sig", "BMP6", "MHC2_sig"]
 
@@ -121,12 +121,41 @@ def local_cox_nll(data: dict[str, np.ndarray], beta: Any) -> float:
         return math.nan
 
 
+HESSIAN_STEP = 1e-3
+
+
+def fd_hessian(f, x: np.ndarray, h: float = HESSIAN_STEP) -> np.ndarray:
+    """Central-difference Hessian of ``f`` at ``x``.
+
+    For a fit through the encrypted channel, every evaluation here is a
+    protocol round, as it is for the optimizer.
+    """
+    x = np.asarray(x, dtype=float)
+    p = x.size
+    e = np.eye(p) * h
+    f0 = f(x)
+    H = np.empty((p, p))
+    for i in range(p):
+        H[i, i] = (f(x + e[i]) - 2 * f0 + f(x - e[i])) / h**2
+        for j in range(i):
+            H[i, j] = H[j, i] = (
+                f(x + e[i] + e[j])
+                - f(x + e[i] - e[j])
+                - f(x - e[i] + e[j])
+                + f(x - e[i] - e[j])
+            ) / (4 * h**2)
+    return H
+
+
 @dataclass
 class CoxResult:
     backend: str
     coefficients: dict[str, float]
+    std_errors: dict[str, float]
+    cleartext: dict[str, float]
     centralized: dict[str, float]
     max_abs_difference: float
+    max_abs_vs_centralized: float
     loglik_encrypted: float
     loglik_centralized: float
     objective_at_fit: float
@@ -138,13 +167,17 @@ class CoxResult:
     context: Context = field(repr=False)
 
     def table(self) -> list[dict[str, Any]]:
-        """Side-by-side comparison of the two fits, row per coefficient."""
+        """The encrypted fit against the same objective fit in the clear.
+
+        Row per coefficient. Both fits use the same optimizer, start and
+        tolerance; only the aggregation differs.
+        """
         return [
             {
                 "coefficient": name,
-                "distributed_encrypted": self.coefficients[name],
-                "aggregated_cleartext": self.centralized[name],
-                "abs_diff": abs(self.coefficients[name] - self.centralized[name]),
+                "encrypted": self.coefficients[name],
+                "cleartext": self.cleartext[name],
+                "abs_diff": abs(self.coefficients[name] - self.cleartext[name]),
             }
             for name in COVARIATES
         ]
@@ -187,16 +220,27 @@ def run(
         value = master.aggregate(np.asarray(beta, dtype=float))
         return PENALTY if (value is None or math.isnan(value)) else float(value)
 
-    fit = minimize(
-        encrypted_nll,
-        x0=np.zeros(len(COVARIATES)) if start is None else np.asarray(start),
-        method="L-BFGS-B",
-        options={"ftol": FTOL},
-    )
+    x0 = np.zeros(len(COVARIATES)) if start is None else np.asarray(start)
+    fit = minimize(encrypted_nll, x0=x0, method="L-BFGS-B", options={"ftol": FTOL})
     beta_hat = np.asarray(fit.x, dtype=float)
+    n_calls = calls["n"]
 
-    # Centralized reference: one stratified fit on the pooled cohort,
-    # which is what the distributed protocol is meant to reproduce.
+    # Standard errors from the Hessian of the encrypted objective at the
+    # fit, each evaluation another protocol round.
+    se = np.sqrt(np.diag(np.linalg.inv(fd_hessian(encrypted_nll, beta_hat))))
+
+    # The same objective, the same optimizer, start and tolerance, with
+    # the encrypted aggregation replaced by an ordinary sum. The
+    # difference from the encrypted fit is what encryption changed.
+    def cleartext_nll(beta):
+        value = sum(local_cox_nll(sites[n], beta) for n in names)
+        return PENALTY if math.isnan(value) else float(value)
+
+    plain = minimize(cleartext_nll, x0=x0, method="L-BFGS-B", options={"ftol": FTOL})
+    beta_plain = np.asarray(plain.x, dtype=float)
+
+    # Centralized reference: one stratified fit on the pooled cohort by
+    # a different algorithm (Newton, in statsmodels).
     df = load_dlbcl()
     strata = df["Subgroup"].cat.codes.to_numpy()
     centralized = PHReg(
@@ -216,12 +260,15 @@ def run(
     return CoxResult(
         backend=backend,
         coefficients=dict(zip(COVARIATES, beta_hat.tolist(), strict=True)),
+        std_errors=dict(zip(COVARIATES, se.tolist(), strict=True)),
+        cleartext=dict(zip(COVARIATES, beta_plain.tolist(), strict=True)),
         centralized=dict(zip(COVARIATES, beta_ref.tolist(), strict=True)),
-        max_abs_difference=float(np.max(np.abs(beta_hat - beta_ref))),
+        max_abs_difference=float(np.max(np.abs(beta_hat - beta_plain))),
+        max_abs_vs_centralized=float(np.max(np.abs(beta_hat - beta_ref))),
         loglik_encrypted=float(ll_enc),
         loglik_centralized=float(ll_ref),
         objective_at_fit=float(fit.fun),
-        n_objective_calls=calls["n"],
+        n_objective_calls=n_calls,
         converged=bool(fit.success),
         site_sizes={n: int(len(sites[n]["time"])) for n in names},
         site_events={n: int(sites[n]["status"].sum()) for n in names},
@@ -235,13 +282,14 @@ if __name__ == "__main__":  # pragma: no cover
         r = run(backend)
         print(f"=== {backend} ===")
         print(f"sites   : {r.site_sizes} (events {r.site_events})")
-        print(f"{'coefficient':<12} {'encrypted':>12} {'centralized':>13} {'diff':>10}")
+        print(f"{'coefficient':<12} {'encrypted':>12} {'cleartext':>13} {'diff':>10}")
         for row in r.table():
             print(
-                f"{row['coefficient']:<12} {row['distributed_encrypted']:>12.6f} "
-                f"{row['aggregated_cleartext']:>13.6f} {row['abs_diff']:>10.2e}"
+                f"{row['coefficient']:<12} {row['encrypted']:>12.6f} "
+                f"{row['cleartext']:>13.6f} {row['abs_diff']:>10.2e}"
             )
-        print(f"max |diff|     : {r.max_abs_difference:.3e}")
+        print(f"max |enc - cleartext|  : {r.max_abs_difference:.3e}")
+        print(f"max |enc - centralized|: {r.max_abs_vs_centralized:.3e}")
         print(
             f"logLik encrypted / centralized: "
             f"{r.loglik_encrypted:.6f} / {r.loglik_centralized:.6f}"

@@ -172,31 +172,46 @@ Each of those `{python} n_calls` calls carried a full encrypt,
 homomorphic sum, and $n$-of-$n$ threshold decryption across the three
 sites.
 
-## Comparison with the aggregated fit
+Standard errors come from the Hessian of the encrypted objective at
+the fit, as on the single-key page:
 
 ```{python}
 import pandas as pd
+from homomorphepy.examples.cox import fd_hessian
 
-centralized = PHReg(
-    df["time"].to_numpy(dtype=float),
-    np.column_stack([df[c].to_numpy(dtype=float) for c in COVARIATES]),
-    status=df["status"].to_numpy(dtype=int),
-    strata=df["Subgroup"].cat.codes.to_numpy(),
-    ties="efron",
-).fit()
+se = np.sqrt(np.diag(np.linalg.inv(fd_hessian(encrypted_nll, beta_hat))))
+pd.DataFrame({"estimate": beta_hat, "std. error": se}, index=COVARIATES)
+```
 
-pd.DataFrame({
-    "coefficient": COVARIATES,
-    "distributed, encrypted": beta_hat,
-    "aggregated cleartext": np.asarray(centralized.params),
-    "difference": np.abs(beta_hat - np.asarray(centralized.params)),
-})
+## Comparison with the cleartext fit
+
+The same objective, optimizer, start and tolerance, with the encrypted
+aggregation replaced by an ordinary sum:
+
+```{python}
+def cleartext_nll(beta):
+    return sum(local_cox_nll(d, beta) for d in sites.values())
+
+opt_plain = minimize(cleartext_nll, x0=np.zeros(len(COVARIATES)),
+                     method="L-BFGS-B", options={"ftol": 1e-9})
+beta_plain = np.asarray(opt_plain.x)
 ```
 
 ```{python}
-max_diff = float(np.max(np.abs(beta_hat - np.asarray(centralized.params))))
-assert max_diff < 1e-4
-max_diff
+#| echo: false
+enc_diff = np.abs(beta_hat - beta_plain)
+pd.DataFrame({
+    "minimize(), encrypted": beta_hat,
+    "minimize(), cleartext": beta_plain,
+    "absolute difference": [f"{d:.2e}" for d in enc_diff],
+}, index=pd.Index(COVARIATES, name="coefficient")).round(7)
+```
+
+The threshold fit agrees with the cleartext fit to within
+`{python} f"{enc_diff.max():.2e}"` in every coefficient.
+
+```{python}
+assert enc_diff.max() < 1e-4
 ```
 
 ## Only the master class changes
@@ -221,7 +236,7 @@ backend_gap = max(
     for c in COVARIATES
 )
 Markdown(f"""
-| backend | max diff vs aggregated | can any single party decrypt? |
+| backend | max diff vs cleartext | can any single party decrypt? |
 |---|---|---|
 | single-decrypter CKKS | {ckks_fit.max_abs_difference:.1e} | yes, the master |
 | threshold ($n$-of-$n$) | {threshold_fit.max_abs_difference:.1e} | no |

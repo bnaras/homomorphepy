@@ -180,32 +180,49 @@ beta_hat = np.asarray(opt.x)
 n_calls, opt.success
 ```
 
-## The centralized reference
-
-One stratified fit on the pooled cohort — what the distributed
-protocol is meant to reproduce.
+Standard errors come from the Hessian of the same encrypted objective
+at the fit, by central differences. Each of those evaluations is
+another protocol round.
 
 ```{python}
-centralized = PHReg(
-    df["time"].to_numpy(dtype=float),
-    np.column_stack([df[c].to_numpy(dtype=float) for c in COVARIATES]),
-    status=df["status"].to_numpy(dtype=int),
-    strata=df["Subgroup"].cat.codes.to_numpy(),
-    ties="efron",
-).fit()
-
 import pandas as pd
+from homomorphepy.examples.cox import fd_hessian
 
-pd.DataFrame({
-    "coefficient": COVARIATES,
-    "distributed, encrypted": beta_hat,
-    "aggregated cleartext": np.asarray(centralized.params),
-    "difference": np.abs(beta_hat - np.asarray(centralized.params)),
-})
+se = np.sqrt(np.diag(np.linalg.inv(fd_hessian(encrypted_nll, beta_hat))))
+pd.DataFrame({"estimate": beta_hat, "std. error": se}, index=COVARIATES)
+```
+
+## Comparison with the cleartext fit
+
+To check the encrypted fit, we run the identical objective a second
+time with the encrypted aggregation replaced by an ordinary sum of the
+three sites' cleartext values: same likelihood, same optimizer, same
+starting values and tolerance, no encryption.
+
+```{python}
+def cleartext_nll(beta):
+    return sum(local_cox_nll(d, beta) for d in sites.values())
+
+opt_plain = minimize(cleartext_nll, x0=np.zeros(len(COVARIATES)),
+                     method="L-BFGS-B", options={"ftol": 1e-9})
+beta_plain = np.asarray(opt_plain.x)
 ```
 
 ```{python}
-assert np.max(np.abs(beta_hat - np.asarray(centralized.params))) < 1e-4
+#| echo: false
+enc_diff = np.abs(beta_hat - beta_plain)
+pd.DataFrame({
+    "minimize(), encrypted": beta_hat,
+    "minimize(), cleartext": beta_plain,
+    "absolute difference": [f"{d:.2e}" for d in enc_diff],
+}, index=pd.Index(COVARIATES, name="coefficient")).round(7)
+```
+
+The encrypted fit agrees with the cleartext fit to within
+`{python} f"{enc_diff.max():.2e}"` in every coefficient.
+
+```{python}
+assert enc_diff.max() < 1e-4
 ```
 
 ## The same run, in one call
@@ -221,23 +238,25 @@ fit = cox.run(backend="ckks")
 sizes = " · ".join(f"{k} n={v} ({fit.site_events[k]} events)"
                    for k, v in fit.site_sizes.items())
 rows = "\n".join(
-    f"| `{r['coefficient']}` | {r['distributed_encrypted']:.6f} "
-    f"| {r['aggregated_cleartext']:.6f} | {r['abs_diff']:.1e} |"
+    f"| `{r['coefficient']}` | {r['encrypted']:.6f} "
+    f"| {fit.std_errors[r['coefficient']]:.6f} "
+    f"| {r['cleartext']:.6f} | {r['abs_diff']:.1e} |"
     for r in fit.table()
 )
 Markdown(
     f"Sites: {sizes}\n\n"
-    "| coefficient | distributed, encrypted | aggregated cleartext | difference |\n"
-    "|---|---|---|---|\n" + rows
+    "| coefficient | encrypted | std. error | cleartext | difference |\n"
+    "|---|---|---|---|---|\n" + rows
 )
 ```
 
-The distributed encrypted fit agrees with the aggregated cleartext fit
-to `{python} f"{fit.max_abs_difference:.1e}"`, over
+The encrypted fit agrees with the cleartext fit to
+`{python} f"{fit.max_abs_difference:.1e}"`, over
 `{python} fit.n_objective_calls` objective evaluations — each one a
 full encrypt, homomorphic sum, and decryption. Log-likelihood
 `{python} f"{fit.loglik_encrypted:.6f}"` encrypted against
-`{python} f"{fit.loglik_centralized:.6f}"` centralized.
+`{python} f"{fit.loglik_centralized:.6f}"` for statsmodels' own
+pooled fit.
 
 ## What this demonstrates
 
@@ -252,9 +271,10 @@ makes this work.** Only a sum crosses the site boundary, and a sum is
 exactly what an additively homomorphic scheme computes. No approximation
 of the likelihood was needed.
 
-**The agreement is at the level of the optimizer's own tolerance**, not
-at the level of the encryption. The gap above is set by `ftol`, not by
-CKKS — the [precision](precision.qmd) page separates the two.
+**The comparison isolates the encryption.** The cleartext fit runs the
+same objective through the same optimizer from the same start, so the
+difference between the two fits is what encrypting the aggregation
+changed. The [precision](precision.qmd) page describes CKKS error.
 
 ## Two tie conventions, on purpose
 

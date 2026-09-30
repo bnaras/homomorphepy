@@ -74,6 +74,19 @@ class TestThresholdBackend:
             )
             assert err / se < SE_TOL, f"{name}: {err:.2e} = {err / se:.1e} SE"
 
+    def test_matches_the_same_objective_fit_in_the_clear(self, threshold_fit):
+        # Same optimizer, start and tolerance; only the aggregation
+        # differs. Measured ~6e-7.
+        assert threshold_fit.max_abs_difference < 1e-5
+
+    def test_standard_errors_match_the_centralized_ones(
+        self, threshold_fit, standard_errors
+    ):
+        # From a finite-difference Hessian of the encrypted objective.
+        # Measured agreement with statsmodels' is ~1e-8.
+        for name, se in standard_errors.items():
+            assert threshold_fit.std_errors[name] == pytest.approx(se, rel=1e-4)
+
     def test_loglikelihood_matches_centralized(self, threshold_fit):
         # Flat near the optimum, so this agrees far more tightly than
         # the coefficients do.

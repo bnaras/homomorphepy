@@ -10,9 +10,10 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-"The encrypted computation gives the right answer" means different
-things in different examples, and being precise about which is the
-difference between a meaningful check and a misleading one.
+## Introduction
+
+Some computations on encrypted data are exact while others are
+approximate. We describe the differences below.
 
 ## Exact, for integer schemes
 
@@ -36,34 +37,29 @@ total = codec.decode(cc.Decrypt(sum(cts).raw, keys.secretKey), 1)[0]
 int(total) == sum(counts)
 ```
 
-Not "agrees to 1e-12" — equal, as integers.
-
 [Aggregation](aggregation.qmd) and [query
-counting](query-count.qmd) assert equality with `==` exactly like this,
-and any tolerance there would be hiding a bug rather than accommodating
-one.
+counting](query-count.qmd) assert equality exactly like this. A
+tolerance there would be hiding a bug rather than accommodating one.
 
 ## Approximate, for CKKS
 
 CKKS encrypts real numbers and trades exactness for that ability.
-Results carry an approximation error which grows with the depth of
-the computation and shrinks with the scaling factor. In practice, at the depths these
-examples use:
+Results carry an approximation error that grows with the depth of the
+computation and shrinks as the scaling factor widens.
 
 ```{python}
-#| code-fold: true
-#| code-summary: "the measurement"
 # The encryption itself is randomized, so a single encrypt/decrypt is a
 # draw and not a measurement -- consecutive draws of the same setting
 # differ by up to a factor of two, enough to reverse the sign of a
 # comparison between two rows. Every cell below is the mean over N_REP
 # fresh encryptions of the *same* values under the *same* keys.
 #
-# 40 is not decoration. At 8 the depth-1 vs depth-2 ratio at magnitude 1
-# wandered over 0.9-1.5 across runs, which is either side of "no
-# difference"; at 40 it settles and the ratios quoted below are
-# reproducible to the digits shown. The whole table costs a few seconds.
+# At N_REP = 8 the depth-1 vs depth-2 ratio at magnitude 1 wandered over
+# 0.9-1.5 across runs, either side of "no difference"; at 40 it settles.
+# The whole table costs a few seconds.
 N_REP = 40
+
+
 def ckks_error(depth, scaling_mod_size, values, weights=None):
     """Encrypt, sum (optionally weighted), decrypt; report the error."""
     cc = fhe_context("CKKS", multiplicative_depth=depth,
@@ -90,15 +86,21 @@ def ckks_error(depth, scaling_mod_size, values, weights=None):
     absolute = float(np.mean(errs))
     return absolute, absolute / float(np.max(np.abs(expected)))
 
+
+# The three settings at a given magnitude are run on the SAME draw, so
+# the comparison between them is controlled: only the parameter under
+# study changes.
+settings = (
+    ("sum", 1, 50, None),
+    ("sum, wider scale", 1, 59, None),
+    ("weighted sum (one multiply)", 2, 50, [0.35, -0.20, 0.50]),
+)
+
 rng = np.random.default_rng(1)
 rows = []
 for magnitude in (1.0, 1e2, 1e4):
     values = [rng.normal(magnitude, magnitude / 10, size=8) for _ in range(3)]
-    for depth, sms, weights, label in (
-        (1, 50, None, "sum"),
-        (1, 59, None, "sum, wider scale"),
-        (2, 50, [0.35, -0.20, 0.50], "weighted sum (one multiply)"),
-    ):
+    for label, depth, sms, weights in settings:
         a, r = ckks_error(depth, sms, values, weights)
         rows.append((label, magnitude, depth, sms, a, r))
 ```
@@ -111,7 +113,7 @@ Markdown(
     "| computation | magnitude | depth | scaling_mod_size "
     "| absolute error | relative |\n|---|---|---|---|---|---|\n"
     + "\n".join(
-        f"| {n} | {m:g} | {d} | {sms} | {a:.1e} | {r:.1e} |"
+        f"| {n} | {m:g} | {d} | {sms} | {a:.2e} | {r:.2e} |"
         for n, m, d, sms, a, r in rows
     )
 )
@@ -119,215 +121,51 @@ Markdown(
 
 ```{python}
 #| echo: false
-# Every ratio quoted below is computed from `rows`, never typed. A
-# hand-written "about two orders" beside a table that says otherwise is
-# exactly the drift this page exists to warn about.
+# Every ratio quoted below is computed from `rows`, never typed.
 def pick(label, magnitude, which="absolute"):
     j = 4 if which == "absolute" else 5
     return next(r[j] for r in rows if r[0] == label and r[1] == magnitude)
 
-mags = (1.0, 1e2, 1e4)
-span      = pick("sum", mags[-1]) / pick("sum", mags[0])
-rel_small = pick("sum", mags[0], "relative")
-rel_large = max(pick("sum", m, "relative") for m in mags[1:])
-gain      = {m: pick("sum", m) / pick("sum, wider scale", m) for m in mags}
-mult      = {m: pick("weighted sum (one multiply)", m) / pick("sum", m)
-             for m in mags}
+def gain(m):
+    return pick("sum", m) / pick("sum, wider scale", m)
+
+def mult(m, which):
+    return pick("weighted sum (one multiply)", m, which) / pick("sum", m, which)
+
+def fmt(x):
+    return f"{x:.0f}" if x >= 100 else f"{x:.2g}"
 ```
 
 Three things to read off that table.
 
-**CKKS precision is proportional, not additive.** Absolute error grows
-with the magnitude of the encrypted value — by a factor of
-`{python} f"{span:.0f}"` across the range shown — while for magnitudes
-of `{python} f"{mags[1]:g}"` and above the relative error holds at or
-below `{python} f"{rel_large:.0e}"`. An absolute tolerance that is
-generous for standardized covariates is therefore not generous for a
-log-likelihood in the hundreds, which is why [Cox
-regression](cox.qmd) and [Cox-lasso](cox-lasso.qmd) raise
-`scaling_mod_size` from 50 to 59.
+**State tolerances relatively, not absolutely.** For the plain sum the
+absolute error rises from `{python} f"{pick('sum', 1.0):.1e}"` at
+magnitude 1 to `{python} f"{pick('sum', 1e4):.1e}"` at magnitude
+$10^4$, a factor of about
+`{python} fmt(pick('sum', 1e4) / pick('sum', 1.0))`, while the relative
+error *falls* — from `{python} f"{pick('sum', 1.0, 'relative'):.1e}"`
+to `{python} f"{pick('sum', 1e4, 'relative'):.1e}"`. At magnitude 1 a
+fixed noise floor is large compared to the answer; by magnitude $10^4$
+it is negligible against it. A tolerance calibrated on standardized
+covariates is therefore far too tight for a log-likelihood in the
+hundreds, which is why the [Cox](cox.qmd) examples raise
+`scaling_mod_size` above the default rather than loosening a
+comparison.
 
-**At magnitude 1 the scale itself is binding, not the magnitude.**
-That row is the exception to the paragraph above: its relative error is
-`{python} f"{rel_small:.0e}"`, some
-`{python} f"{rel_small / rel_large:.0f}"` times worse than the larger
-magnitudes, and widening the scaling factor recovers about
-`{python} f"{np.log10(gain[mags[0]]):.0f}"` orders of magnitude. By
-magnitude `{python} f"{mags[-1]:g}"` that same widening changes the
-error by a factor of `{python} f"{gain[mags[-1]]:.1f}"` — which is to
-say, not at all. `scaling_mod_size` is a floor on precision, not a
-general-purpose
-accuracy dial: it helps exactly when it is the binding constraint and is
-inert otherwise.
+**Widening the scaling factor helps only where that floor binds.** At
+magnitude 1 it improves the absolute error by a factor of
+`{python} fmt(gain(1.0))`. At magnitude $10^4$ the same change gives a
+factor of `{python} fmt(gain(1e4))` — that is, nothing. Once the floor
+is no longer what limits the answer, a wider scale stops buying
+accuracy while still consuming modulus budget. It is a targeted fix
+for small-magnitude work, not a general accuracy dial.
 
-**Each multiplication consumes a level and costs precision.** The
-depth-2 row is worse than the depth-1 sum at every magnitude — by
-factors of
-`{python} ", ".join(f"{mult[m]:.1f}" for m in mags)`
-respectively — even though it produces an answer of similar size.
+**Each multiplication costs precision as well as budget.** The depth-2
+row is worse than the depth-1 sum at every magnitude: by a factor of
+`{python} fmt(mult(1.0, 'absolute'))` in absolute terms at magnitude 1,
+and `{python} fmt(mult(1e4, 'relative'))` in relative terms at
+magnitude $10^4$. The budget is consumed whether or not the extra
+precision is missed.
 
-The penalty is mild here because these are single multiplies, and it
-compounds with depth. That is why [similarity search](similarity.qmd)
-is built to spend only one level on its matrix-vector product, and why
-the diagonal encoding it uses multiplies the encrypted query by
-*unencrypted* diagonals rather than by encrypted ones.
-
-These are *within-language* comparisons: the encrypted result against
-the same computation performed in the clear on the same data. That is
-the actual cryptographic claim, and it is the tightest bound any
-example here can make.
-
-## Statistical, for fitted estimates
-
-When an optimizer runs through the encrypted channel, the estimate it
-returns is compared against a centralized fit. The relevant tolerance
-is not CKKS precision but *statistical*: two optimizers with different
-stopping rules do not halt at the same point even on identical data,
-and the difference between them is meaningless if it is small relative
-to the standard error.
-
-The [Cox](cox.qmd) fit is the case in point. Its coefficients differ
-from the centralized fit by some absolute amount, but the number that
-tells you whether that matters is the same difference measured against
-the standard error of the estimate:
-
-```{python}
-import pandas as pd
-from statsmodels.duration.hazard_regression import PHReg
-from homomorphepy import load_dlbcl
-from homomorphepy.examples import cox
-from homomorphepy.examples.cox import COVARIATES
-
-fit = cox.run(backend="ckks")
-
-df = load_dlbcl()
-central = PHReg(
-    df["time"].to_numpy(dtype=float),
-    np.column_stack([df[c].to_numpy(dtype=float) for c in COVARIATES]),
-    status=df["status"].to_numpy(dtype=int),
-    strata=df["Subgroup"].cat.codes.to_numpy(),
-    ties="efron",
-).fit()
-
-se = np.asarray(central.bse)
-diff = np.array([abs(fit.coefficients[c] - fit.centralized[c])
-                 for c in COVARIATES])
-
-pd.DataFrame({
-    "coefficient": COVARIATES,
-    "abs difference": diff,
-    "standard error": se,
-    "difference / SE": diff / se,
-})
-```
-
-```{python}
-#| echo: false
-from IPython.display import Markdown
-Markdown(
-    f"The largest disagreement is {diff.max():.1e} in absolute terms, "
-    f"which is {(diff / se).max():.1e} of one standard error."
-)
-```
-
-A difference of that size is invisible in any reported result. Quoting
-it as an absolute number instead would invite a reader to compare it
-against a CKKS error bound, which is a category mistake: it is set by
-the optimizer's stopping rule, and it would be the same if the channel
-were not encrypted at all.
-
-## What cannot be compared
-
-**Differentially private runs.** [DP](dp.qmd) draws fresh noise on
-every query, so two runs of the same code on the same data disagree.
-Only distributional behavior is comparable — the ordering of
-optimizers under noise, the shape of the degradation as σ grows.
-
-The recorded sweep makes the trap concrete. Several of its rows report
-*the same* error to every digit:
-
-```{python}
-import json
-from pathlib import Path
-
-rec = json.loads(Path("_recorded/dp_sweep.json").read_text())
-pd.DataFrame([
-    {"sigma": r["sigma"], "method": r["method"],
-     "max abs diff": r["max_abs_diff"], "collapsed": r["collapsed"]}
-    for r in rec["rows"]
-])
-```
-
-Read naively, the repeated value looks like a stable measurement that
-survived a tenfold change in σ. It is the opposite. Those rows are the
-fits that collapsed back to their all-zero starting point, so their
-"error" is just the distance from the origin to the true fit — a
-constant of the problem, carrying no information about the noise at
-all. A quantity that stops responding to its input has stopped being a
-measurement, and nothing in the run raises to say so.
-
-**Iteration counts.** A loop that stops when a residual first falls
-below a fixed threshold reports where a continuous quantity crossed a
-line. CKKS noise alone can shift it by one, and redrawing the data
-moves it further. It is a property of the sample, not of the method.
-
-## Where the data comes from
-
-**Measured data is shipped.** The DLBCL gene-expression cohort is a
-real dataset, so the examples that use it read the same bytes every
-time. The expression matrix travels as raw float64 with a checksum,
-because the [Cox-lasso](cox-lasso.qmd) screening step ranks 6416
-probes and keeps 100 — near-ties at that boundary can swap under a
-one-ulp perturbation, which text formatting would introduce.
-
-**Simulated data is drawn fresh.** The other examples generate their
-cohorts from a data-generating process on each run. The claim they
-make is that the encrypted protocol reproduces the cleartext answer
-*on whatever data it was given*, which is stronger than reproducing
-one particular dataset — and it is checked across several draws.
-
-## Categorical order is protocol semantics
-
-Sites are visited in a fixed order, and the first one is the lead
-decryptor in threshold decryption. The order is therefore declared in
-the shipped data and asserted on load, not left to whatever a
-`groupby` happens to produce:
-
-```{python}
-from homomorphepy import site_order
-
-site_order()
-```
-
-That is not alphabetical:
-
-```{python}
-sorted(site_order())
-```
-
-The distinction is load-bearing because `Subgroup` ships as a pandas
-`Categorical` with a declared category order, and grouping respects it.
-Store the same column as plain strings and the grouping sorts instead:
-
-```{python}
-as_categorical = list(df.groupby("Subgroup", observed=True).size().index)
-as_strings = list(df["Subgroup"].astype(str)
-                    .groupby(df["Subgroup"].astype(str)).size().index)
-
-pd.DataFrame({"as shipped (categorical)": as_categorical,
-              "if stored as strings": as_strings})
-```
-
-```{python}
-#| echo: false
-Markdown(
-    f"So the lead decryptor would silently change from "
-    f"**{as_categorical[0]}** to **{as_strings[0]}**."
-)
-```
-
-Nothing would fail. The fit would return the same coefficients, because
-the arithmetic is symmetric in the sites — but a different party would
-be holding the lead role in the threshold ceremony than the one the
-protocol was reviewed against. It is worth knowing before anyone
-"tidies" the column.
+These are comparisons of the encrypted result against *the same
+computation performed in the clear on the same data*.
