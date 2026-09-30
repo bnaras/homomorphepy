@@ -23,7 +23,6 @@ website:
           - mle.qmd
           - cox.qmd
           - cox-threshold.qmd
-          - consensus-admm.qmd
           - cox-lasso.qmd
           - text: "---"
           - secure-inference.qmd

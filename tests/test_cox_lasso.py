@@ -108,8 +108,8 @@ class TestFullPipeline:
         # Deliberately NOT an equality, even though it MATCHED exactly
         # (147 = 147) when measured. The stopping rule is an absolute
         # residual threshold, so the count is where a continuous
-        # quantity first crosses it, and test_consensus_admm shows that
-        # flipping under CKKS noise alone at n=23. This problem simply
+        # quantity first crosses it, and a count whose residual lands
+        # near the threshold can flip under CKKS noise alone. This problem simply
         # is not near a boundary -- consistent with R reproducing 147
         # across an openfhe.R version change. Asserting equality would
         # convert a happy fact into a brittle requirement.

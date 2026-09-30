@@ -28,13 +28,11 @@ Ordered by dependency weight:
   encrypted patient data without seeing it.
 - :mod:`~homomorphepy.examples.cox` — stratified Cox regression across
   sites, single-decrypter or threshold.
-- :mod:`~homomorphepy.examples.consensus_admm` — a convex program the
-  optimizer cannot be handed a callback for, solved by ADMM with an
-  encrypted consensus step.
 - :mod:`~homomorphepy.examples.cox_lasso` — the full pipeline on gene
-  expression: pooled standardization, screening, penalized fit.
+  expression: pooled standardization, screening, and a penalized fit
+  by consensus ADMM with an encrypted consensus step.
 - :mod:`~homomorphepy.examples.dp` — what adding differential privacy
-  on top costs.
+  on top costs, for the Cox fit and for consensus ADMM.
 
 Submodules are not imported here: each pulls in the crypto backend,
 and ``python -m homomorphepy.examples.mle`` would otherwise warn about
@@ -43,7 +41,6 @@ a double import. Import the one you want directly.
 
 __all__ = [
     "aggregation",
-    "consensus_admm",
     "cox",
     "cox_lasso",
     "dp",

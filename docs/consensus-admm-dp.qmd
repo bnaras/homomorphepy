@@ -1,6 +1,6 @@
 ---
 title: "Consensus ADMM under differential privacy"
-subtitle: "When the noise breaks the stopping rule rather than the search"
+subtitle: "A demonstration"
 ---
 
 ```{python}
@@ -10,208 +10,468 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-::: {.callout-important}
-## A demonstration, not a recommendation
+## Introduction
 
-The threshold-FHE protocol in [consensus ADMM](consensus-admm.qmd) is
-*lossless*: it releases the exact consensus average and leaks nothing
-else. Differential privacy releases a deliberately corrupted average,
-to bound what repeated releases can reveal. This page shows what that
-costs. It is not advice to add it.
-:::
+This page is a demonstration. It fits an L2-regularized logistic
+regression across $N$ sites by consensus ADMM under threshold FHE, the
+protocol the [Cox-lasso](cox-lasso.qmd) page uses. Each site solves
+its local problem with cvxpy, and the aggregator decrypts only the
+average of the sites' encrypted vectors.
 
-## Why this is not the Cox page again
+## The problem and its consensus split
 
-[Cox regression under DP](dp.qmd) adds Gaussian noise to a scalar
-objective and watches an optimizer fail. The failure there is in the
-*search*: a finite-difference gradient divides noise by a tiny step,
-the gradient direction becomes meaningless, and the fit collapses to
-its starting point.
+With $N$ sites, local data $(X_i, y_i)$ at site $i$, and a shared
+coefficient $x \in \mathbb{R}^p$, the global problem is
 
-Consensus ADMM has a different shape. Nothing is probing an objective.
-The only quantity crossing the site boundary is a per-iteration average
-of the $x_i + u_i$ vectors, and the iteration is a fixed-point
-recursion rather than a search. So the search cannot break — there is
-no search.
+$$
+\min_{x \in \mathbb{R}^p}
+\sum_{i=1}^{N} \ell_i(x; X_i, y_i)
++ \frac{\lambda}{2}\, \lVert x \rVert_2^2
+$$
 
-What breaks instead is the **stopping rule**, and it breaks in a way
-that is easy to miss because the loop still returns an answer.
+where $\ell_i$ is the logistic loss on site $i$. The standard consensus
+split (Boyd, Parikh, Chu, Peleato, Eckstein, 2011) introduces local
+copies $x_i \in \mathbb{R}^p$ and a single global consensus
+$z \in \mathbb{R}^p$:
 
-## The mechanism
+$$
+\min_{\{x_i\}, z}
+\sum_i \ell_i(x_i; X_i, y_i) + \frac{\lambda}{2}\, \lVert z \rVert_2^2
+\quad \text{s.t.}\quad x_i = z, \ \forall i.
+$$
 
-Unchanged from the Cox page in substance. Site $i$ adds a draw
-$\mathcal{N}(0, \sigma^2 N)$ to its $x_i + u_i$ vector *before*
-encrypting. The encrypted draws sum under the joint key and the $1/N$
-scaling contracts the variance back to $\sigma^2$ per coordinate, so
-the recovered consensus carries exactly the intended noise per
-coordinate and no party ever holds the clean value — an aggregator that
-is compromised sees encrypted, already-noised contributions.
+The augmented-Lagrangian iteration is:
 
-The variance bookkeeping is the only thing that differs from the scalar
-case: there the per-site scale is $\sigma/\sqrt{N}$ because the sum of
-$N$ draws is released directly; here it is $\sigma\sqrt{N}$ because the
-sum is *divided by* $N$ before release. Both land the released quantity
-at $\mathcal{N}(0, \sigma^2)$.
+$$
+\begin{aligned}
+x_i^{k+1} &= \arg\min_{x_i}\, \ell_i(x_i) + \frac{\lambda}{2N}\lVert x_i\rVert_2^2 + \frac{\rho}{2}\lVert x_i - z^k + u_i^k\rVert_2^2, \\
+z^{k+1} &= \frac{1}{N}\sum_i (x_i^{k+1} + u_i^k), \\
+u_i^{k+1} &= u_i^k + (x_i^{k+1} - z^{k+1}).
+\end{aligned}
+$$
 
-## The stopping rule has to change
+The $x$-update is local at each site; the $z$-update is the consensus
+average that has to traverse the encrypted channel; the $u$-update is
+local again. Only the $z$-update needs cryptography.
 
-ADMM normally halts when the primal and dual residuals fall below a
-tolerance. Under noise they cannot. Each iteration re-injects a fresh
-draw, so the residuals do not shrink towards zero — they settle onto a
-floor set by $\sigma$.
+## Adding noise
 
-A tolerance test against that floor has two outcomes, and both are bad.
-If the tolerance sits below the floor it never fires and the loop runs
-to its iteration cap. If it sits near the floor it fires when one draw
-happens to land small, which is *worse*, because a lucky draw is
-indistinguishable from convergence in the output.
+Here we ask what happens if each site also adds noise, so that the
+released iterates satisfy **output differential privacy**. Adding the
+noise takes one extra draw per site per iteration. With this
+optimizer, the fits are poor at any noise level that gives a small
+$\varepsilon$. The page runs the fits and reports the numbers.
 
-So the loop runs a **fixed** number of iterations instead, taken from
-the noiseless fit on the same cohort. The shared ADMM loop already
-accepts a tolerance argument, so this needs no new code path: passing
-`tol=0.0` disables the early exit and leaves everything else identical.
+Threshold FHE without noise remains the main path. This page shows
+what adding output DP on top costs.
+
+## A brief output-DP primer
+
+Given a query $f: \mathcal{D} \to \mathbb{R}^p$, the **Gaussian
+mechanism** releases $\tilde f(D) = f(D) + \mathcal{N}(0, \sigma^2 I)$.
+Sensitivity-driven $\sigma$ gives single-query $(\varepsilon, \delta)$
+DP. Multi-query composition uses **zCDP** (Bun and Steinke, 2016): each
+release is $(\Delta/\sigma)^2/2$-zCDP; $T$ releases compose linearly to
+$T \cdot \rho$; convert back to $(\varepsilon, \delta)$ via
+$\varepsilon = \rho + 2\sqrt{\rho \log(1/\delta)}$.
+
+## The protocol modification
+
+Without noise, site $i$ encrypts $x_i + u_i$ and the aggregator
+decrypts only their average $z$. The change here is **noise injection
+at each site**: at every ADMM iteration site $i$ adds an independent
+draw $\eta_i \sim \mathcal{N}(0, \sigma^2 N \cdot I)$ to $x_i + u_i$
+*before* encrypting. The encrypted noise terms sum under the joint
+key, the $1/N$ scaling contracts the variance back to $\sigma^2$ per
+coordinate, and the recovered $z$ has noise $\mathcal{N}(0, \sigma^2 I)$.
+
+Each site adds its own noise, rather than the aggregator adding it.
+So:
+
+1. Only site $i$ sees its noiseless $x_i + u_i$. The aggregator sees
+   encrypted noisy contributions and, after decryption, their noisy
+   average.
+2. As on the [Cox page](dp.qmd), each site draws its own noise.
+
+In the code below, `site_contribution_dp()` adds the noise and
+encrypts inside the site, so `encrypted_consensus_dp()` receives only
+encrypted values. If the aggregator added the noise instead, the
+numbers would be the same, but the aggregator would see each site's
+noiseless $x_i + u_i$.
+
+## The stopping rule changes
+
+Residual-based convergence checks are not meaningful under noise: the
+residuals never shrink below the per-iteration noise floor. So $T$ is
+**fixed in advance** rather than discovered.
+
+There is a second reason. Even without noise, stopping on the
+residuals makes $T$ depend on the data, and $T$ multiplies the privacy
+budget below. Choosing $T$ from the cohort would be a release the
+budget does not count. The next section picks $\rho$ and $T$ without
+using the cohort.
+
+The $\sigma = 0$ row of the table below checks that, with no noise,
+the protocol reaches the centralized fit in that fixed $T$.
+
+## Setup
 
 ```{python}
-from homomorphepy.examples.dp import consensus_sweep
+import warnings
 
-rows = consensus_sweep()
-T, rho = rows[0].n_iter, rows[0].rho
-T, rho
+import cvxpy as cp
+import numpy as np
+
+warnings.simplefilter("ignore", UserWarning)  # CLARABEL is chatty here
+
+N, P, LAM = 3, 4, 1.0
+SOLVER = cp.CLARABEL  # named explicitly, never left to cvxpy's choice
 ```
 
-`{python} T` iterations at $\rho =$ `{python} rho`, both inherited from
-the lossless fit rather than tuned under noise — tuning them against a
-noisy objective would be the same mistake one level up.
-
-## The sweep
+Each site is a `Site`, so it takes part in threshold key generation,
+keeps its own share, and encrypts with what it received at setup. Its
+state is its ADMM iterates and its local problem. `z` and `u` are cvxpy
+`Parameter`s, so the problem canonicalizes once and every iteration
+reuses it.
 
 ```{python}
-#| echo: false
+from homomorphepy import Site
+
+
+class ConsensusSite(Site):
+    _needs_local_fn = False  # ADMM does not use the contribute() round
+
+    def __init__(self, name, X, y, rho):
+        super().__init__(name, (X, y), None)
+        self.x_var = cp.Variable(P)
+        self.z_par = cp.Parameter(P, value=np.zeros(P))
+        self.u_par = cp.Parameter(P, value=np.zeros(P))
+        margins = -cp.multiply(2.0 * y - 1.0, X @ self.x_var)
+        local_loss = (cp.sum(cp.logistic(margins))
+                      + (LAM / (2 * N)) * cp.sum_squares(self.x_var))
+        augmented = (rho / 2) * cp.sum_squares(self.x_var - self.z_par + self.u_par)
+        self.problem = cp.Problem(cp.Minimize(local_loss + augmented))
+        self.x_curr = np.zeros(P)
+        self.u_curr = np.zeros(P)
+
+    def local_update(self, z_curr):
+        self.z_par.value = z_curr
+        self.u_par.value = self.u_curr
+        self.problem.solve(solver=SOLVER)
+        if self.problem.status not in ("optimal", "optimal_inaccurate"):
+            raise RuntimeError(f"local solve at {self.name} ended {self.problem.status}")
+        self.x_curr = np.asarray(self.x_var.value).ravel()
+
+    def dual_update(self, z_new):
+        self.u_curr = self.u_curr + (self.x_curr - z_new)
+```
+
+The loop takes the consensus step as a function, so the same loop runs
+in the clear and through the encrypted channel. It stops when both
+residuals fall below `tol`; `tol = 0` runs exactly `max_iter`
+iterations.
+
+```{python}
+def admm_loop(sites, rho, max_iter, tol, consensus_fn):
+    z = np.zeros(P)
+    for k in range(1, max_iter + 1):
+        for s in sites:
+            s.local_update(z)
+        z_new = consensus_fn(sites)
+        for s in sites:
+            s.dual_update(z_new)
+        primal = np.sqrt(np.mean([np.sum((s.x_curr - z_new) ** 2) for s in sites]))
+        dual = rho * np.linalg.norm(z_new - z)
+        z = z_new
+        if primal < tol and dual < tol:
+            return z, k, True
+    return z, max_iter, False
+
+
+def plain_consensus(sites):
+    return sum(s.x_curr + s.u_curr for s in sites) / len(sites)
+```
+
+## Simulated cohort
+
+Three sites with an intercept, two normal covariates, and a
+Bernoulli(0.5) covariate. The data are drawn fresh with numpy.
+
+```{python}
+N_PER = (500, 1000, 1500)
+BETA_TRUE = np.array([-0.5, 0.4, -0.3, 0.6])  # intercept, age, bmi, sex
+COVARIATES = ["intercept", "age", "bmi", "sex"]
+
+
+def draw_cohort(beta, rng):
+    cohort = []
+    for n in N_PER:
+        X = np.column_stack([np.ones(n), rng.normal(size=n), rng.normal(size=n),
+                             rng.binomial(1, 0.5, size=n)]).astype(float)
+        prob = 1.0 / (1.0 + np.exp(-(X @ beta)))
+        cohort.append((X, (rng.uniform(size=n) < prob).astype(float)))
+    return cohort
+
+
+site_data = draw_cohort(BETA_TRUE, np.random.default_rng(20260412))
+[X.shape for X, _ in site_data]
+```
+
+## Choosing $\rho$ and $T$ without touching the cohort
+
+Without noise, one could tune $\rho$ by running candidate values
+through the encrypted channel on the real data. Under output DP that
+sweep is itself a release. It solves at every site, for every
+candidate, at every iteration, and its outputs (the chosen $\rho$ and
+especially $T$) depend on the records. The budget below counts $T$
+Gaussian releases. If $T$ were chosen from the data, that choice would
+not be counted.
+
+There are two ways to handle this. One is to pay for the selection
+with a DP selection mechanism, such as report-noisy-max or the
+exponential mechanism over the grid, with negative iteration count as
+the utility. That needs a sensitivity bound for iterations to
+convergence under a one-record change, and we do not have one.
+
+The other is to choose without the data, which is what we do. The
+sweep runs on a **surrogate cohort** built only from facts the protocol
+already treats as public: the number of sites, their approximate
+sizes, and the covariate schema. The effect sizes are nominal values
+fixed in the analysis plan. No record from any site enters it.
+
+This has two consequences. First, the sweep needs no encryption,
+because it uses no private data. Second, the cost is in accuracy
+rather than privacy. A surrogate that misjudges the curvature gives a
+$\rho$ the cohort would not have picked, and possibly a $T$ that is too
+short. We cannot check this against the cohort without spending
+budget. Since the budget grows linearly in $T$, a generous $T$ is not
+free either.
+
+```{python}
 import pandas as pd
 
-pd.DataFrame({
-    "sigma":             [r.sigma for r in rows],
-    "max|vs noiseless|": [r.max_abs_vs_noiseless for r in rows],
-    "primal residual":   [r.final_primal for r in rows],
-    "dual residual":     [r.final_dual for r in rows],
-})
+TOL, MAX_ITER = 1e-3, 60
+BETA_NOMINAL = np.array([0.0, 0.5, 0.5, 0.5])  # nominal, not the cohort's
+
+surrogate_data = draw_cohort(BETA_NOMINAL, np.random.default_rng(20260413))
+
+
+def build(cohort, rho):
+    return [ConsensusSite(f"Site {i + 1}", X, y, rho) for i, (X, y) in enumerate(cohort)]
+
+
+rows = []
+for rho in (10.0, 20.0, 50.0, 100.0, 500.0):
+    _, k, ok = admm_loop(build(surrogate_data, rho), rho, MAX_ITER, TOL, plain_consensus)
+    rows.append({"rho": rho, "iters": k, "converged": ok})
+rho_sweep = pd.DataFrame(rows)
+
+converged = rho_sweep[rho_sweep["converged"]]
+if converged.empty:
+    raise RuntimeError("No rho in the grid converged within max_iter on the surrogate.")
+best = converged["iters"].idxmin()  # the first minimum, in grid order
+rho_chosen, T_fixed = float(converged.loc[best, "rho"]), int(converged.loc[best, "iters"])
+rho_sweep
+```
+
+These two values are now fixed: $\rho =$ `{python} f"{rho_chosen:g}"`
+and $T =$ `{python} T_fixed`. The DP-ADMM loop below runs exactly
+$T$ iterations, whatever the residuals do.
+
+## Threshold-FHE setup
+
+```{python}
+from homomorphepy import fhe_context, make_threshold_master
+
+ctx = fhe_context("CKKS", multiplicative_depth=1, scaling_mod_size=59,
+                  first_mod_size=60, batch_size=8)
+```
+
+The DP version of the consensus step. Each site draws its noise from
+its own generator.
+
+```{python}
+def site_contribution_dp(site, sigma, rng):
+    # At the site: draw the noise, add it, and encrypt with the public
+    # parameters received at setup, all before anything leaves. The
+    # noiseless x_i + u_i never leaves.
+    noise = rng.normal(0.0, sigma * np.sqrt(N), size=P) if sigma > 0 else 0.0
+    return site.encrypt(site.x_curr + site.u_curr + noise)
+
+
+def encrypted_consensus_dp(master, sites, sigma, rngs):
+    # At the aggregator: sum the encrypted values, scale, threshold-
+    # decrypt. The 1/N scaling contracts the summed noise variance
+    # back to sigma^2.
+    cts = [site_contribution_dp(s, sigma, r) for s, r in zip(sites, rngs)]
+    ct_avg = sum(cts) * (1.0 / len(sites))
+    return np.asarray(master.decrypt(ct_avg, length=P), dtype=float)
+```
+
+## The DP-ADMM loop
+
+```{python}
+def run_dp_admm(sigma, seed):
+    # The sites exist first: the joint public key is built from them,
+    # each keeping the share it generates.
+    sites = build(site_data, rho_chosen)
+    master = make_threshold_master("Aggregator", ctx, sites)
+    rngs = [np.random.default_rng([seed, i]) for i in range(N)]
+    z, _, _ = admm_loop(sites, rho_chosen, T_fixed, 0.0,
+                        lambda s: encrypted_consensus_dp(master, s, sigma, rngs))
+    return z
+```
+
+## Centralized fit
+
+This fit pools the raw data, so it is not part of the protocol. We use
+it only to measure how far the noise moves the answer, in the
+`max_dev` column below. It is not released, so it is not charged to
+the budget. A real deployment has no such reference, which is why
+$\rho$ and $T$ were fixed in advance.
+
+```{python}
+X_pooled = np.vstack([X for X, _ in site_data])
+y_pooled = np.concatenate([y for _, y in site_data])
+beta_var = cp.Variable(P)
+margins = -cp.multiply(2.0 * y_pooled - 1.0, X_pooled @ beta_var)
+cp.Problem(cp.Minimize(cp.sum(cp.logistic(margins))
+                       + (LAM / 2) * cp.sum_squares(beta_var))).solve(solver=SOLVER)
+beta_central = np.asarray(beta_var.value).ravel()
+```
+
+## The $\sigma$ sweep
+
+Six $\sigma$ values from zero to one. The $\sigma = 0$ row checks that
+the protocol without noise matches the centralized fit.
+
+```{python}
+sigma_grid = [0.0, 1e-4, 1e-3, 1e-2, 1e-1, 1.0]
+sweep_results = [run_dp_admm(s, seed=100 + j) for j, s in enumerate(sigma_grid, start=1)]
+```
+
+## $\sigma = 0$ sanity check
+
+```{python}
+clean_dev = np.max(np.abs(sweep_results[0] - beta_central))
+agree_tol = 10 * TOL
+if clean_dev > agree_tol:
+    raise RuntimeError("DP-ADMM at sigma = 0 disagrees with the centralized fit.")
+print(f"Sigma = 0 max coefficient deviation: {clean_dev:.2e} (tol {agree_tol:.0e})")
+```
+
+## Summary table
+
+```{python}
+summary = pd.DataFrame(
+    [list(z) + [np.max(np.abs(z - beta_central))] for z in sweep_results]
+    + [list(beta_central) + [0.0]],
+    columns=COVARIATES + ["max_dev"],
+    index=[f"sigma={s:g}" for s in sigma_grid] + ["centralized"],
+)
+summary.round(6)
 ```
 
 ```{python}
 #| echo: false
 from IPython.display import Markdown
 
-noisy = [r for r in rows if r.sigma > 0]
-err_ratio = noisy[-1].max_abs_vs_noiseless / noisy[0].max_abs_vs_noiseless
-sig_ratio = noisy[-1].sigma / noisy[0].sigma
-res_ratio = noisy[-1].final_primal / noisy[0].final_primal
+dev = dict(zip(sigma_grid, summary["max_dev"].iloc[:-1]))
 Markdown(
-    f"Across the noisy rows, sigma rises {sig_ratio:.0f}-fold, the "
-    f"coefficient error rises {err_ratio:.0f}-fold, and the primal "
-    f"residual rises {res_ratio:.0f}-fold."
+    f"The deviation is {dev[1e-4]:.2g} at $\\sigma = 10^{{-4}}$, "
+    f"{dev[1e-2]:.2g} at $\\sigma = 0.01$, and {dev[1e-1]:.2g} at "
+    f"$\\sigma = 0.1$. At $\\sigma = 1$ it is {dev[1.0]:.2g}, and the "
+    "coefficients are far from the centralized fit. The algorithm is the "
+    "same at every $\\sigma$; the loss comes from the noise, not from the "
+    "encryption."
 )
 ```
 
-The coefficient error grows **linearly** in $\sigma$. That is the
-honest price of the mechanism and it is not a surprise.
+## Privacy budget
 
-The residual columns are the interesting ones. They grow linearly too,
-which is the noise floor made visible. At the largest $\sigma$ the
-primal residual settles at
-`{python} f"{noisy[-1].final_primal:.1e}"` and simply stays there — any
-tolerance below that would never be met no matter how long the loop
-ran. This is the concrete reason the stopping rule is a fixed iteration
-count rather than a threshold, and it is measured rather than argued.
-
-## The $\sigma = 0$ control
+Each iteration releases one noisy average $z$, with noise
+$\mathcal{N}(0, \sigma^2 I)$. Let $\Delta$ be the largest change in $z$
+(L2 norm over all $p$ coordinates) from adding or removing one record.
+Each record sits at one site, and the aggregator decrypts only the
+average, so one iteration is a single Gaussian release with
+$\rho_{\text{iter}} = (\Delta/\sigma)^2/2$. Over $T =$
+`{python} T_fixed` iterations the total is
+$\rho = T \cdot (\Delta/\sigma)^2/2$, whatever the number of sites.
+This is the same accounting as the [Cox page](dp.qmd). Convert to
+$(\varepsilon, \delta)$ via the standard formula.
 
 ```{python}
-#| echo: false
-control = rows[0]
-Markdown(
-    f"At sigma = 0 the fixed-iteration loop lands within "
-    f"{control.max_abs_vs_noiseless:.1e} of the lossless fit, with "
-    f"primal residual {control.final_primal:.1e}."
-)
+def zcdp_to_eps(rho, delta=1e-5):
+    return rho + 2 * np.sqrt(rho * np.log(1 / delta))
+
+
+budget = pd.DataFrame({"sigma": [s for s in sigma_grid if s > 0]})
+budget["rho_total"] = T_fixed * (1 / budget["sigma"]) ** 2 / 2
+budget["epsilon_at_delta_1e-5"] = zcdp_to_eps(budget["rho_total"])
+budget.round(4)
 ```
 
-This row is the control, and it is the reason the rest of the table can
-be read as a statement about privacy. Replacing a convergence test with
-a fixed iteration count is a change to the *algorithm*, and it could
-have moved the answer on its own. With the mechanism switched off it
-does not: the loop reproduces the lossless fit to CKKS approximation
-error. Whatever the other rows show is therefore the noise, not the
-stopping rule.
+Because $\rho$ and $T$ were chosen on the surrogate, this total covers
+everything the procedure releases about the data. The one assumption
+is the sensitivity $\Delta = 1$, a placeholder noted in the limitations
+below.
 
-## The privacy budget
+The smallest $\varepsilon$, at $\sigma = 1$ where the fit is already
+poor, is `{python} f"{budget['epsilon_at_delta_1e-5'].min():.2g}"`.
+Whether that is acceptable depends on the application.
 
-The accounting is the same zero-concentrated DP composition used on the
-[Cox page](dp.qmd), with one structural difference in its favor: the
-number of releases is not set by an optimizer's appetite. ADMM releases
-one consensus vector per iteration, and the iteration count is fixed in
-advance, so the budget is **known before the protocol runs** rather
-than discovered afterwards.
+## Summary
 
-```{python}
-import math
-
-def zcdp_to_epsilon(rho_total, delta=1e-5):
-    return rho_total + 2 * math.sqrt(rho_total * math.log(1 / delta))
-
-def budget(n_releases, sigma, delta=1e-5, sensitivity=1.0):
-    rho_total = n_releases * (sensitivity / sigma) ** 2 / 2
-    return rho_total, zcdp_to_epsilon(rho_total, delta)
-
-pd.DataFrame(
-    [(T, s) + budget(T, s) for s in (r.sigma for r in rows) if s > 0],
-    columns=["releases", "sigma", "rho total", "epsilon at delta=1e-5"],
-)
-```
-
-Sensitivity $\Delta = 1$ is a placeholder, as it is throughout these
-pages. A defensible sensitivity bound for the consensus vector is a
-separate problem: it would need the per-site iterates to be clipped to
-a known radius, which changes the optimization problem being solved and
-is not attempted here.
-
-The $\varepsilon$ values at the usable end of this table are large. That
-is the finding, not a failure of the implementation.
-
-## What this demonstrates
-
-**The same mechanism meets a different protocol and breaks something
-else.** Noise on a scalar objective destroys a search direction; noise
-on a consensus vector destroys a convergence criterion. Knowing that
-DP "costs accuracy" does not tell you which part of your procedure will
-stop working.
-
-**The failure is silent by default.** A residual-based loop under noise
-still returns a coefficient vector, still reports a residual, and still
-looks converged. Nothing raises. The only reason it is visible here is
-that the $\sigma = 0$ control was run alongside it.
-
-**The lossless protocol remains the recommendation.** Threshold FHE
-releases the exact consensus and leaks nothing beyond it. Everything on
-this page is the cost of adding a second, independent privacy notion on
-top of a protocol that did not need it to be correct.
+1. At $\sigma = 0$ the protocol matches the centralized fit. Adding DP
+   takes one draw per site per iteration and nothing new in the
+   package.
+2. The page runs six values of $\sigma$, each for the fixed $T$, and
+   tabulates the coefficients and their deviation from the centralized
+   fit.
+3. At noise levels where the fit is still close, $\varepsilon$ is
+   large, because zCDP composition runs over $T$ Gaussian releases.
+   Reducing it would need fewer iterations, a tighter sensitivity
+   bound, or subsampling amplification, all outside this
+   demonstration.
+4. Choosing $\rho$ and $T$ counts against privacy too. It looks like
+   setup, but it sets $T$, the multiplier on the budget. Choosing them
+   without the data keeps the budget complete, at a cost in accuracy.
+   Encryption hides the intermediate values, not these choices.
 
 ## Limitations
 
-**Fixed $T$ is a blunt instrument.** Taking the iteration count from a
-noiseless fit assumes such a fit is available on comparable data. In a
-deployment where it is not, $T$ has to be chosen a priori, and choosing
-it badly costs either accuracy or budget with no signal to tell you
-which.
+- **Tight sensitivity bounds** for the consensus update. $\Delta = 1$
+  is a placeholder.
+- **Paying for the selection instead of avoiding it.** Report-noisy-max
+  or the exponential mechanism over the $\rho$ grid would let the
+  cohort inform the choice for a declared cost. That needs a
+  sensitivity bound on iterations-to-convergence under a one-record
+  change, which we do not have.
+- **Surrogate quality.** A surrogate that misjudges the cohort's
+  curvature costs accuracy — a worse $\rho$, or a $T$ too short to
+  converge — and there is no way to detect that from inside the
+  protocol without spending budget.
+- **Adaptive noise** schedules across iterations.
+- **Subsampling amplification** of the DP accountant.
+- **Decentralized averaging.** Replacing the aggregator with gossip
+  averaging among the sites can amplify privacy (Cyffers, Even,
+  Bellet, and Massoulié, 2022). This protocol keeps a central
+  aggregator.
+- **Malicious-site protection.** A hostile site can corrupt either its
+  $(x_i + u_i)$ or its noise draw; out of scope.
 
-**Sensitivity is unbounded without clipping.** See above; this is the
-gap that would have to close first in any real use.
+## The same run, in one call
 
-**One cohort, one draw of it.** The mechanism is randomized, so a
-specific coefficient here is not a reproducible quantity. What is
-stable is the behavior: linear error growth, a residual floor at
-$\sigma$, and a $\sigma = 0$ control that reproduces the lossless fit.
+`consensus_sweep()` in `homomorphepy.examples.dp` runs everything
+above: it draws the cohort and the surrogate, chooses $\rho$ and $T$,
+fits at each $\sigma$, and checks the $\sigma = 0$ row.
 
-**No accounting for the ADMM iterates themselves.** Only the consensus
-releases are counted. A site's own $x_i$ never leaves it, but the dual
-variable it maintains is a function of every consensus it has seen, and
-a full treatment would say so formally.
+```{python}
+from homomorphepy.examples.dp import consensus_sweep
+
+result = consensus_sweep()
+result.choice.rho, result.choice.T, f"{result.clean_dev:.2e}"
+```
+
+For consensus ADMM without noise, on real data, see the
+[Cox-lasso](cox-lasso.qmd) page.

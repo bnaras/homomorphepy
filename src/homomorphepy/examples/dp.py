@@ -99,21 +99,36 @@ from scipy.optimize import minimize
 
 from homomorphepy.actors import make_threshold_master, make_worker
 from homomorphepy.context import Context, fhe_context
-from homomorphepy.examples import consensus_admm as _ca
+from homomorphepy.examples import _consensus
+from homomorphepy.examples._consensus import (
+    ConsensusSite,
+    admm_loop,
+    centralized,
+    plain_consensus,
+)
 from homomorphepy.examples.cox import CKKS_PARAMS, COVARIATES, local_cox_nll
 from homomorphepy.examples.cox import _site_frames as _cox_sites
 
 __all__ = [
+    "CONSENSUS_DGP",
     "DEFAULT_DELTA",
     "SENSITIVITY",
+    "ConsensusSite",
     "DPFit",
     "DPConsensusFit",
+    "DPConsensusResult",
+    "RhoChoice",
+    "admm_loop",
     "amplification_factor",
     "budget",
+    "centralized",
+    "choose_rho_and_T",
     "compare_optimizers",
     "consensus_at_sigma",
     "consensus_sweep",
     "fit_at_sigma",
+    "plain_consensus",
+    "simulate_cohort",
     "sweep",
     "zcdp_to_epsilon",
 ]
@@ -281,130 +296,191 @@ def compare_optimizers(sigma: float = 1e-4, seed: int = 1) -> dict[str, DPFit]:
 
 
 # ---------------------------------------------------------------------
-# The same mechanism on consensus ADMM, where what breaks is different
+# The same mechanism on consensus ADMM
 # ---------------------------------------------------------------------
+
+
+# L2-regularized logistic regression across three sites. The cohort
+# and the surrogate share the design -- site sizes and covariate
+# schema -- and differ in the effect sizes: the cohort's are the truth,
+# the surrogate's are nominal values fixed in advance.
+CONSENSUS_DGP = dict(
+    covariates=("intercept", "age", "bmi", "sex"),
+    beta_true=(-0.5, 0.4, -0.3, 0.6),
+    beta_nominal=(0.0, 0.5, 0.5, 0.5),
+    n_per=(500, 1000, 1500),
+    lam=1.0,
+    tol=1e-3,
+    max_iter=60,
+    rho_grid=(10.0, 20.0, 50.0, 100.0, 500.0),
+    sigmas=(0.0, 1e-4, 1e-3, 1e-2, 1e-1, 1.0),
+    seed=20260412,
+    surrogate_seed=20260413,
+)
+
+
+def simulate_cohort(beta: Sequence[float], seed: int):
+    """Three sites of ``(X, y)``: an intercept, two normal covariates, a
+    Bernoulli(0.5) covariate, and a logistic outcome."""
+    rng = np.random.default_rng(seed)
+    beta = np.asarray(beta, dtype=float)
+    cohort = []
+    for n in CONSENSUS_DGP["n_per"]:
+        X = np.column_stack(
+            [
+                np.ones(n),
+                rng.normal(size=n),
+                rng.normal(size=n),
+                rng.binomial(1, 0.5, size=n),
+            ]
+        ).astype(float)
+        prob = 1.0 / (1.0 + np.exp(-(X @ beta)))
+        cohort.append((X, (rng.uniform(size=n) < prob).astype(float)))
+    return cohort
+
+
+def _build(cohort, rho: float) -> list[ConsensusSite]:
+    lam, N = CONSENSUS_DGP["lam"], len(cohort)
+    return [
+        ConsensusSite(f"Site {i + 1}", X, y, rho, lam, N)
+        for i, (X, y) in enumerate(cohort)
+    ]
+
+
+@dataclass
+class RhoChoice:
+    rho: float
+    T: int
+    sweep: list[dict]
+
+
+def choose_rho_and_T(surrogate) -> RhoChoice:
+    """Pick ``rho`` and the iteration count ``T`` on the surrogate.
+
+    Runs noiseless ADMM in the clear at each ``rho`` in the grid and
+    keeps the one that converges in the fewest iterations; ``T`` is that
+    count. The surrogate carries no record from any site, so the choice
+    is not a release, and it needs no encryption.
+    """
+    p = surrogate[0][0].shape[1]
+    tol, max_iter = CONSENSUS_DGP["tol"], CONSENSUS_DGP["max_iter"]
+    rows = []
+    for rho in CONSENSUS_DGP["rho_grid"]:
+        _, k, _, ok = admm_loop(
+            _build(surrogate, rho), p, rho, max_iter, tol, plain_consensus
+        )
+        rows.append({"rho": float(rho), "iters": k, "converged": ok})
+    converged = [r for r in rows if r["converged"]]
+    if not converged:
+        raise RuntimeError("no rho in the grid converged within max_iter")
+    # First minimum in grid order, as a tie would be broken by hand.
+    best = min(converged, key=lambda r: r["iters"])
+    return RhoChoice(rho=best["rho"], T=best["iters"], sweep=rows)
 
 
 @dataclass
 class DPConsensusFit:
     sigma: float
     beta: np.ndarray
-    beta_noiseless: np.ndarray
-    beta_centralized: np.ndarray
-    max_abs_vs_noiseless: float
-    max_abs_vs_centralized: float
-    final_primal: float
-    final_dual: float
-    n_iter: int
-    rho: float
+    max_dev: float
+    trajectory: list[np.ndarray] = field(repr=False)
 
 
-def _consensus_setup(seed: int):
-    """Pick rho and the iteration count from a noiseless run in the clear.
+def consensus_at_sigma(
+    sigma: float,
+    cohort,
+    rho: float,
+    T: int,
+    beta_centralized: np.ndarray,
+    seed: int | None = None,
+) -> DPConsensusFit:
+    """Run ``T`` iterations of consensus ADMM with output-DP noise.
 
-    The DP loop needs a *fixed* number of iterations, and this is where
-    that number comes from: whatever the lossless protocol needed at the
-    best rho on the same cohort.
+    Each site adds ``N(0, sigma^2 * N)`` to its ``x + u`` vector and
+    encrypts the result, all before anything leaves the site. The
+    encrypted draws sum under the joint key and the ``1/N`` scaling
+    contracts the variance back to ``sigma^2`` per coordinate, so the
+    released consensus carries ``N(0, sigma^2)`` and no party other than
+    the site ever holds its noiseless vector.
+
+    The loop runs exactly ``T`` iterations (``tol = 0``): residuals
+    cannot shrink below the noise floor, and a data-dependent stopping
+    time would be a release the budget does not count.
     """
-    cohort = _ca.simulate(seed)
-    p, N, lam = _ca.DGP["p"], len(cohort), _ca.DGP["lam"]
-    tol, max_iter = _ca.DGP["tol"], _ca.DGP["max_iter"]
+    sites = _build(cohort, rho)
+    N, p = len(sites), cohort[0][0].shape[1]
+    ctx = fhe_context("CKKS", **_consensus.CKKS_PARAMS)
+    master = make_threshold_master("Aggregator", ctx, sites)
+    # One generator per site: each site draws its own noise.
+    rngs = [np.random.default_rng([seed or 0, i]) for i in range(N)]
 
-    def build(rho):
-        return [
-            _ca.ConsensusSite(f"Site {i + 1}", X, y, rho, lam, N)
-            for i, (X, y) in enumerate(cohort)
-        ]
+    def site_contribution_dp(site, rng):
+        noise = rng.normal(0.0, sigma * math.sqrt(N), size=p) if sigma > 0 else 0.0
+        return site.encrypt(site.x_curr + site.u_curr + noise)
 
-    def plain_consensus(sites):
-        return sum(s.x_curr + s.u_curr for s in sites) / len(sites)
-
-    best_rho, best_k = None, None
-    for rho in _ca.DGP["rho_grid"]:
-        _, k, _ = _ca._admm_loop(build(rho), p, rho, max_iter, tol, plain_consensus)
-        if k < max_iter and (best_k is None or k < best_k):
-            best_rho, best_k = float(rho), k
-    if best_rho is None:
-        raise RuntimeError("no rho in the grid converged")
-
-    beta_noiseless, _, _ = _ca._admm_loop(
-        build(best_rho), p, best_rho, max_iter, tol, plain_consensus
-    )
-    return cohort, build, p, N, best_rho, best_k, beta_noiseless
-
-
-def consensus_at_sigma(sigma: float, seed: int = 98765) -> DPConsensusFit:
-    """Run consensus ADMM with per-site Gaussian noise on the consensus.
-
-    Each site adds ``N(0, sigma^2 * N)`` to its ``x + u`` vector
-    *before* encrypting. The encrypted draws sum under the joint key and
-    the ``1/N`` scaling contracts the variance back to ``sigma^2`` per
-    coordinate, so the recovered consensus carries exactly the intended
-    noise and no party ever holds the clean value.
-
-    **The stopping rule has to change.** Residual-based convergence is
-    meaningless here: the residuals cannot fall below the per-iteration
-    noise floor, so a tolerance test either never fires or fires on an
-    accident of the draw. The loop instead runs a fixed number of
-    iterations, taken from the noiseless fit on the same cohort. Passing
-    ``tol=0.0`` disables the early exit without touching the shared loop.
-    """
-    cohort, build, p, N, rho, T, beta_noiseless = _consensus_setup(seed)
-
-    ctx = fhe_context("CKKS", **_ca.CKKS_PARAMS)
-    key_holders = [
-        make_worker(f"Site {i + 1}", None, lambda d, t: 0.0) for i in range(N)
-    ]
-    master = make_threshold_master("Aggregator", ctx, key_holders)
-    pub = [h.params for h in key_holders]
-    rng = np.random.default_rng(seed + 1)
-
-    def noised_encrypted_consensus(sites):
-        cts = []
-        # The noise is drawn at the site and folded in before
-        # encryption, so what the aggregator sums is already both
-        # noised and encrypted. Adding it at the aggregator would mean
-        # it had seen the clean vector first.
-        for par, s in zip(pub, sites, strict=True):
-            draw = rng.normal(0.0, sigma * np.sqrt(N), size=p) if sigma > 0 else 0.0
-            cts.append(par.encrypt(s.x_curr + s.u_curr + draw))
-        ct_avg = sum(cts) * (1.0 / len(sites))
+    def encrypted_consensus_dp(sites):
+        cts = [site_contribution_dp(s, r) for s, r in zip(sites, rngs, strict=True)]
+        ct_avg = sum(cts) * (1.0 / N)
         return np.asarray(master.decrypt(ct_avg, length=p), dtype=float)
 
-    sites = build(rho)
-    beta, n_iter, _ = _ca._admm_loop(sites, p, rho, T, 0.0, noised_encrypted_consensus)
-
-    # Report the residuals the loop deliberately stopped consulting, so
-    # the noise floor is visible rather than merely asserted.
-    primal = float(np.sqrt(np.mean([np.sum((s.x_curr - beta) ** 2) for s in sites])))
-    dual = float(np.sqrt(len(sites)) * rho * np.linalg.norm(sites[0].x_curr - beta))
-
-    beta_central = _ca._centralized(cohort, _ca.DGP["lam"])
+    z, _, trajectory, _ = admm_loop(sites, p, rho, T, 0.0, encrypted_consensus_dp)
     return DPConsensusFit(
         sigma=float(sigma),
-        beta=beta,
-        beta_noiseless=beta_noiseless,
-        beta_centralized=beta_central,
-        max_abs_vs_noiseless=float(np.max(np.abs(beta - beta_noiseless))),
-        max_abs_vs_centralized=float(np.max(np.abs(beta - beta_central))),
-        final_primal=primal,
-        final_dual=dual,
-        n_iter=n_iter,
-        rho=rho,
+        beta=z,
+        max_dev=float(np.max(np.abs(z - beta_centralized))),
+        trajectory=trajectory,
     )
+
+
+@dataclass
+class DPConsensusResult:
+    choice: RhoChoice
+    beta_centralized: np.ndarray
+    fits: list[DPConsensusFit]
+    clean_dev: float
+    tol: float
 
 
 def consensus_sweep(
-    sigmas: Sequence[float] = (0.0, 1e-4, 1e-3, 1e-2),
-    seed: int = 98765,
-) -> list[DPConsensusFit]:
-    """``consensus_at_sigma`` across a range, sigma = 0 first.
+    sigmas: Sequence[float] | None = None,
+    cohort=None,
+    surrogate=None,
+) -> DPConsensusResult:
+    """The whole example: choose ``rho`` and ``T``, then sweep ``sigma``.
 
-    The ``sigma = 0`` row is the control: with the mechanism switched
-    off, the fixed-iteration loop must land on the lossless fit. If it
-    does not, the discrepancy is the protocol, not the privacy.
+    Simulates the cohort and the surrogate unless they are passed in as
+    sequences of ``(X, y)`` pairs, one per site. Raises if the
+    ``sigma = 0`` run is not within ``10 * tol`` of the centralized
+    fit: with the noise off, the fixed-``T`` protocol must reach it, or
+    the other rows say nothing about privacy.
     """
-    return [consensus_at_sigma(s, seed=seed) for s in sigmas]
+    d = CONSENSUS_DGP
+    sigmas = tuple(d["sigmas"] if sigmas is None else sigmas)
+    if cohort is None:
+        cohort = simulate_cohort(d["beta_true"], d["seed"])
+    if surrogate is None:
+        surrogate = simulate_cohort(d["beta_nominal"], d["surrogate_seed"])
+
+    choice = choose_rho_and_T(surrogate)
+    beta_central = centralized(cohort, d["lam"])
+    fits = [
+        consensus_at_sigma(s, cohort, choice.rho, choice.T, beta_central, seed=100 + j)
+        for j, s in enumerate(sigmas, start=1)
+    ]
+    clean = [f for f in fits if f.sigma == 0.0]
+    clean_dev = clean[0].max_dev if clean else math.nan
+    if clean and clean_dev > 10 * d["tol"]:
+        raise RuntimeError(
+            f"at sigma = 0 the protocol is {clean_dev:.2e} from the "
+            f"centralized fit, more than 10 * tol = {10 * d['tol']:g}"
+        )
+    return DPConsensusResult(
+        choice=choice,
+        beta_centralized=beta_central,
+        fits=fits,
+        clean_dev=clean_dev,
+        tol=d["tol"],
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

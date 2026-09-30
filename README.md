@@ -45,9 +45,8 @@ documentation page that builds the same protocol step by step:
 | `mle` | An unmodified optimizer driving an encrypted objective. |
 | `secure_inference` | A lab scoring patients it cannot see — and the attack this does *not* prevent. |
 | `cox` | Stratified Cox regression across three sites, single-decrypter or threshold. |
-| `consensus_admm` | Convex optimization where only the consensus step is encrypted. |
-| `cox_lasso` | The full pipeline on gene expression: encrypted standardization, screening, penalized fit. |
-| `dp` | What adding differential privacy on top costs. A demonstration, not a recommendation. |
+| `cox_lasso` | The full pipeline on gene expression: encrypted standardization, screening, and a penalized fit by consensus ADMM. |
+| `dp` | What adding differential privacy on top costs, for the Cox fit and for consensus ADMM. A demonstration, not a recommendation. |
 
 ```
 uv run python -m homomorphepy.examples.query_count

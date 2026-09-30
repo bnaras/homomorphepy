@@ -276,10 +276,8 @@ cryptographic error.
 The run converges in `{python} rec['n_iter']` iterations, but that
 number is a property of this problem rather than a guarantee: the loop
 stops when residuals first fall below a fixed threshold, so the count
-is where a continuous quantity crosses a line. The [consensus
-ADMM](consensus-admm.qmd) example shows the same count shifting by one
-under CKKS noise alone. Here the residuals are not near a boundary, so
-it is stable.
+is where a continuous quantity crosses a line. When a residual lands
+near the threshold, CKKS noise alone can shift the count by one.
 
 ## Breslow ties here, Efron in the other Cox example
 

@@ -221,13 +221,13 @@ enough noise to be meaningful.
 None of this is a defect in the cryptographic protocol. The protocol
 releases exactly what it promises.
 
-## A different protocol breaks differently
+## The same mechanism on consensus ADMM
 
-Everything above concerns an optimizer handed a noisy objective, where
-what fails is the *search*. Apply the same mechanism to
-[consensus ADMM](consensus-admm.qmd) and what fails instead is the
-*stopping rule* — a different failure with a different remedy, taken up
-on its own page: [consensus ADMM under DP](consensus-admm-dp.qmd).
+Everything above concerns an optimizer handed a noisy objective. The
+same mechanism applied to consensus ADMM is on its own page,
+[consensus ADMM under DP](consensus-admm-dp.qmd). There the protocol
+runs a fixed number of iterations, and choosing $\rho$ and that number
+becomes part of the privacy accounting.
 
 ## Reproducing
 

@@ -13,8 +13,6 @@ the pipeline needs the encrypted channel:
    reached by ADMM, with only the consensus average traversing the
    encrypted channel.
 
-Two things differ from :mod:`.consensus_admm` beyond scale.
-
 **The tie convention is Breslow here, not Efron.** The partial
 likelihood is built symbolically as ``log_sum_exp(eta[i:]) - eta[i]``
 over event times so cvxpy can canonicalize it; that expression *is*
@@ -42,7 +40,7 @@ import numpy as np
 
 from homomorphepy.actors import ThresholdMaster, make_threshold_master, make_worker
 from homomorphepy.context import Context, fhe_context
-from homomorphepy.examples.consensus_admm import SOLVER
+from homomorphepy.examples._consensus import SOLVER
 from homomorphepy.fixtures import load_dlbcl, load_dlbcl_gex, site_order
 
 __all__ = ["CoxLassoResult", "run", "K", "LAMBDA", "RHO"]
