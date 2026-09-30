@@ -73,6 +73,9 @@ class TestEncryptedScreening:
         golden = np.asarray(load_golden()["top_idx"], dtype=int)
         assert np.array_equal(screened.top_idx, golden)
 
+    def test_encrypted_screen_matches_the_clear(self, screened):
+        assert screened.screen_match
+
     def test_indices_are_one_based_like_R(self, screened):
         assert screened.top_idx.min() >= 1
         assert screened.top_idx.max() <= 6416
@@ -123,6 +126,14 @@ class TestFullPipeline:
         # rather than merely landing in the same basin.
         r_z_enc = np.asarray(load_golden()["z_enc"], dtype=float)
         assert np.max(np.abs(full.beta_admm - r_z_enc)) < 1e-5
+
+    def test_encrypted_matches_unencrypted_admm(self, full):
+        # Same loop, same data; only the average is encrypted.
+        assert full.admm_vs_plain < 1e-5
+
+    def test_unencrypted_admm_matches_Rs(self, full):
+        r_z_ref = np.asarray(load_golden()["z_ref"], dtype=float)
+        assert np.max(np.abs(full.beta_plain - r_z_ref)) < 1e-5
 
     def test_centralized_fit_matches_Rs(self, full):
         # No ADMM involved: two independent Clarabel builds on the

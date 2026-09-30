@@ -1,7 +1,8 @@
 """Record the full Cox-lasso run for the documentation.
 
 The consensus ADMM at K = 100 needs three per-site conic solves per
-iteration and takes about half an hour, which is too long to run on
+iteration, and the example runs it twice -- with an unencrypted
+average and with the encrypted one -- which is too long to run on
 every documentation render. This script runs it once and writes the
 results to ``cox_lasso_run.json``; ``docs/cox-lasso.qmd`` reads that
 file and never hard-codes a value.
@@ -40,15 +41,22 @@ def main() -> None:
         "wall_clock_minutes": round(minutes, 1),
         "n_probes_total": 6416,
         "n_probes_screened": int(result.top_idx.size),
+        "screen_match": bool(result.screen_match),
         "n_iter": int(result.n_iter),
+        "n_iter_plain": int(result.n_iter_plain),
         "n_nonzero": int(result.n_nonzero),
+        "n_nonzero_centralized": int(result.n_nonzero_centralized),
+        "n_active_intersection": int(result.n_active_intersection),
+        "admm_vs_plain": float(result.admm_vs_plain),
+        "plain_vs_centralized": float(result.plain_vs_centralized),
         "admm_vs_centralized": float(result.admm_vs_centralized),
         "pool_agree_mu": float(result.pool_agree_mu),
         "pool_agree_sigma": float(result.pool_agree_sigma),
+        "top_idx": np.asarray(result.top_idx, dtype=int).tolist(),
+        "sigma_K": np.asarray(result.sigma[result.top_idx - 1], dtype=float).tolist(),
         "beta_admm": np.asarray(result.beta_admm, dtype=float).tolist(),
-        "beta_centralized": np.asarray(
-            result.beta_centralized, dtype=float
-        ).tolist(),
+        "beta_plain": np.asarray(result.beta_plain, dtype=float).tolist(),
+        "beta_centralized": np.asarray(result.beta_centralized, dtype=float).tolist(),
         # One row per ADMM sweep, K columns: the consensus iterate after
         # each encrypted averaging step. The page plots the eight
         # largest-magnitude coordinates of this against the centralized

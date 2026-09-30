@@ -26,6 +26,10 @@ Ordered by dependency weight:
   encrypted channel by an unmodified optimizer.
 - :mod:`~homomorphepy.examples.secure_inference` — a lab scoring
   encrypted patient data without seeing it.
+- :mod:`~homomorphepy.examples.encrypted_regression` — the same with a
+  logistic model, the sigmoid evaluated on encrypted values.
+- :mod:`~homomorphepy.examples.similarity` — retrieval across sites
+  whose models disagree, under threshold and joint rotation keys.
 - :mod:`~homomorphepy.examples.cox` — stratified Cox regression across
   sites, single-decrypter or threshold.
 - :mod:`~homomorphepy.examples.cox_lasso` — the full pipeline on gene
@@ -44,7 +48,9 @@ __all__ = [
     "cox",
     "cox_lasso",
     "dp",
+    "encrypted_regression",
     "mle",
     "query_count",
     "secure_inference",
+    "similarity",
 ]

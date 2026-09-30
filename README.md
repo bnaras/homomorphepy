@@ -43,10 +43,15 @@ documentation page that builds the same protocol step by step:
 | `aggregation` | Encrypted counting under a single-decrypter coordinator. Exact under BFV. |
 | `query_count` | The same count under threshold keys, where nobody can decrypt alone. |
 | `mle` | An unmodified optimizer driving an encrypted objective. |
-| `secure_inference` | A lab scoring patients it cannot see — and the attack this does *not* prevent. |
 | `cox` | Stratified Cox regression across three sites, single-decrypter or threshold. |
 | `cox_lasso` | The full pipeline on gene expression: encrypted standardization, screening, and a penalized fit by consensus ADMM. |
+| `secure_inference` | A lab scoring patients it cannot see — and the attack this does *not* prevent. |
+| `encrypted_regression` | The same with a logistic model: a sigmoid evaluated on encrypted values. |
+| `similarity` | Retrieval across sites whose models disagree, under threshold keys and joint rotation keys. |
 | `dp` | What adding differential privacy on top costs, for the Cox fit and for consensus ADMM. A demonstration, not a recommendation. |
+
+The documentation also has a Precision page on what it means for an
+encrypted result to be correct.
 
 ```
 uv run python -m homomorphepy.examples.query_count
@@ -143,7 +148,7 @@ regenerates the numbers.
 
 ```
 uv sync                  # dev dependencies
-uv run pytest            # 130 tests; add -m slow for the ADMM pipeline
+uv run pytest            # add -m slow for the ADMM pipeline and DP sweeps
 uv run ruff check .
 ```
 

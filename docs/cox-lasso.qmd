@@ -1,6 +1,6 @@
 ---
 title: "Cox-lasso on gene expression"
-subtitle: "Every stage of the pipeline under encryption"
+subtitle: "Consensus ADMM under threshold keys on a real survival problem"
 ---
 
 ```{python}
@@ -10,25 +10,97 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-The largest example here, and the only one where the encrypted channel
-carries every stage rather than one:
+## Introduction
 
-1. **Standardization** — column means and second moments pooled across
-   sites, so no site's marginal distribution is revealed.
-2. **Screening** — 6416 probes ranked by a univariate Cox score,
-   pooled under encryption, and the top 100 kept. Fitting all 6416
-   exhausts memory during canonicalization.
-3. **Fitting** — a lasso-penalized stratified Cox model by consensus
-   ADMM, with only the consensus average encrypted.
+This page runs the threshold-key consensus-ADMM protocol on a real,
+high-dimensional survival problem: a stratified **Cox lasso** on the
+diffuse large-B-cell lymphoma (DLBCL) gene-expression cohort of
+@Rosenwald2002, the dataset @BayleFanLou2025 use to motivate
+distributed Cox estimation.
 
-## The cohort
+The [Cox](cox.qmd) and [Cox with threshold keys](cox-threshold.qmd)
+pages give an optimizer such as `scipy.optimize.minimize` an objective
+function that runs one encrypted round across the sites. That does not
+work for cvxpy, which does not call a function we supply: it converts
+a symbolic problem once to a standard form and passes that to a
+solver. Instead we use **federated consensus ADMM**
+[@BoydParikhChuPeleatoEckstein2011]. The global problem is split into
+per-site subproblems, each solved by cvxpy in the clear, and only the
+cross-site **consensus average** is encrypted. Disciplined
+parametrized programming (DPP) keeps the per-site solves fast: between
+iterations only the `Parameter` values change, not the problem
+structure.
+
+We develop the fit in two passes. First we run it **in the clear** to
+fix the target: standardize, screen, and solve the consensus ADMM with
+an ordinary unencrypted average, checking against the centralized
+cvxpy solve. Then we put it **under threshold keys**, replacing each
+cross-site sum — the standardization moments, the screening
+statistics, and the per-iteration consensus average — with one round
+of encrypted summation, and confirm that the encrypted fit reproduces
+the in-the-clear reference.
+
+Standardization and screening run live on this page. The two ADMM
+runs take over an hour together, so their results come from a
+recorded run produced by `docs/_recorded/record_cox_lasso.py`, which
+calls the same code; the page reads the JSON it writes.
+
+## The global problem and its consensus split
+
+The three molecular subgroups (GCB, ABC, Type III) are our sites: they
+arise from different cells of origin and have systematically different
+prognosis. Using them as sites is a choice made for this
+demonstration. With $N$ sites, per-site standardized design matrices
+$X_k \in \mathbb{R}^{n_k \times p}$, event times $t_k$, status
+$\delta_k$, a shared coefficient $\beta \in \mathbb{R}^p$, and the
+per-stratum Cox partial log-likelihood $\ell_k$ in Breslow form, the
+global problem is
+
+$$
+\min_{\beta \in \mathbb{R}^p}\;
+-\sum_{k=1}^{N}\ell_k(\beta)\;+\;\lambda\lVert\beta\rVert_1 .
+$$
+
+Because the partial likelihood factorizes additively across strata,
+the consensus split introduces per-site copies $x_k$ and a global
+consensus $z$:
+
+$$
+\min_{\{x_k\},\,z}\;
+\sum_k\bigl(-\ell_k(x_k)\bigr) + \lambda\lVert z\rVert_1
+\quad\text{s.t.}\quad x_k = z,\ \forall k,
+$$
+
+with augmented-Lagrangian iteration
+
+$$
+\begin{aligned}
+x_k^{t+1} &= \arg\min_x -\ell_k(x) + \tfrac{\rho}{2}\lVert x - z^t + u_k^t\rVert_2^2,\\
+z^{t+1}   &= S_{\lambda/(N\rho)}\!\Bigl(\tfrac{1}{N}\sum_k (x_k^{t+1}+u_k^t)\Bigr),\\
+u_k^{t+1} &= u_k^t + (x_k^{t+1}-z^{t+1}),
+\end{aligned}
+$$
+
+where $S_\tau(v)=\operatorname{sign}(v)\max(|v|-\tau,0)$ is
+soft-thresholding (the proximal map of $\tau\lVert\cdot\rVert_1$). The
+$x$-update is the per-site cvxpy solve; the $z$-update needs the
+cross-site average $\bar w=\tfrac1N\sum_k(x_k+u_k)$ — that average is
+the only quantity that traverses the encrypted channel; the
+soft-threshold is closed-form at the aggregator and adds no
+cryptographic depth.
+
+## The federated fit in the clear
+
+The three subgroups are our sites. We load the cohort, split it by
+subgroup, and keep each site's raw expression matrix, event times, and
+status.
 
 ```{python}
 import numpy as np
 from homomorphepy import load_dlbcl, load_dlbcl_gex, site_order
 
 df = load_dlbcl()
-gex, _, _ = load_dlbcl_gex()
+gex, _, probe_names = load_dlbcl_gex()
 
 def site_raw(name):
     m = (df["Subgroup"] == name).to_numpy()
@@ -46,7 +118,124 @@ p_raw = sites[0]["X"].shape[1]
 [(s["name"], s["X"].shape) for s in sites]
 ```
 
-## Threshold keys
+We standardize the features so the L1 penalty applies uniformly across
+predictors on different scales. The pooled mean and variance are
+additive over sites: site $k$ contributes $S_k=\sum_{i\in k}x_i$ and
+$Q_k=\sum_{i\in k}x_i^2$, from which
+$\mu=\tfrac1{N_{\mathrm{tot}}}\sum_k S_k$ and
+$\sigma^2=\tfrac1{N_{\mathrm{tot}}}\sum_k Q_k-\mu^2$. In the clear this
+is a pair of column sums.
+
+```{python}
+mu_ref = sum(s["X"].sum(axis=0) for s in sites) / n_total
+q_ref = sum((s["X"] ** 2).sum(axis=0) for s in sites) / n_total
+sigma_ref = np.sqrt(np.maximum(q_ref - mu_ref**2, np.finfo(float).eps))
+```
+
+Solving the full Cox-lasso at $p =$ `{python} p_raw` exhausts memory
+during cvxpy canonicalization, so we pre-screen to the $K = 100$
+probes with the strongest univariate association with survival — the
+screen-then-fit pattern @BayleFanLou2025 use on this cohort. For probe
+$g$ on stratum $k$ in event-time order with risk set $R_i^{(k)}$ at
+event $i$,
+$U_g^{(k)}=\sum_{i\in k,\delta_i=1}(X_{i,g}-\overline X_{R_i^{(k)},g})$
+is the score and
+$I_g^{(k)}=\sum_{i\in k,\delta_i=1}\widehat{\operatorname{Var}}_{R_i^{(k)}}(X_{:,g})$
+the information; both sum across sites, and the screen ranks probes by
+$|Z_g|=|U_g|/\sqrt{I_g}$.
+
+```{python}
+from homomorphepy.examples.cox_lasso import K, _score_info_at_zero
+
+sites_std_ref = [{**s, "X": (s["X"] - mu_ref) / sigma_ref} for s in sites]
+UI_ref = [_score_info_at_zero(s["X"], s["time"], s["status"]) for s in sites_std_ref]
+U_ref = sum(u for u, _ in UI_ref)
+I_ref = sum(i for _, i in UI_ref)
+Z_ref = U_ref / np.sqrt(np.maximum(I_ref, np.finfo(float).eps))
+top_ref = np.argsort(-np.abs(Z_ref), kind="stable")[:K] + 1   # 1-based
+top_ref[:10]
+```
+
+Probes whose statistics are nearly tied at the $K$ boundary can swap
+under a one-ulp perturbation, and a different retained set means a
+different model. Three things keep the screen reproducible at that
+boundary. The expression matrix is stored as raw float64 rather than
+text, which at 15 significant digits would drop bits that matter at
+the cutoff. The event-time ordering uses `np.lexsort((-status, time))`,
+whose key order is easy to reverse by accident. And the ranking uses
+`kind="stable"`, so ties break by index rather than arbitrarily.
+
+The centralized stratified Cox-lasso fit — our ground truth — is a
+single cvxpy solve summing the per-stratum Breslow partial likelihoods
+plus the L1 penalty. The distributed fit splits this objective into
+per-site subproblems tied by a consensus variable. Each local problem
+is built so DPP applies: $z$ and $u$ enter as `Parameter`s whose
+values change every ADMM iteration while the symbolic structure does
+not.
+
+```{python}
+import inspect
+from homomorphepy.examples import cox_lasso
+
+print(inspect.getsource(cox_lasso.build_local))
+```
+
+The ADMM driver is the whole federated algorithm. How the cross-site
+average is formed is left to its `consensus` argument, a function of
+the per-site $(x_k, u_k)$ vectors. Everything else (the local cvxpy
+solves, the soft-threshold $z$-update, the dual update, the stopping
+rule) is ordinary Python. The recorded run calls it first with an
+unencrypted average and then, unchanged, with an encrypted one.
+
+```{python}
+print(inspect.getsource(cox_lasso.run_admm))
+print(inspect.getsource(cox_lasso.plain_consensus))
+```
+
+We fix $\rho =$ `{python} f"{cox_lasso.RHO:g}"` and a cap of
+`{python} cox_lasso.MAX_ITER` iterations. The dual residual
+$\rho\lVert z^{t+1}-z^t\rVert$ is the binding term here and decays
+slowly; with this $\rho$ the absolute stopping rule
+`primal < TOL and dual < TOL` (with `TOL =`
+`{python} f"{cox_lasso.TOL:g}"`) is what ends the loop. Smaller $\rho$
+reaches the tolerance in fewer iterations but at a looser fit, so we
+keep $\rho =$ `{python} f"{cox_lasso.RHO:g}"` for the tightest
+agreement with the centralized solve.
+
+```{python}
+#| echo: false
+import json
+import math
+from pathlib import Path
+from IPython.display import Markdown
+
+rec = json.loads(Path("_recorded/cox_lasso_run.json").read_text())
+Markdown(
+    f"In the recorded run, the unencrypted ADMM converges in "
+    f"{rec['n_iter_plain']} iterations and matches the centralized fit "
+    f"to {rec['plain_vs_centralized']:.1e} in maximum absolute coefficient "
+    "difference. That fit is the target the encrypted protocol must "
+    "reproduce."
+)
+```
+
+## The same fit under threshold keys
+
+Only three quantities ever cross a site boundary: the standardization
+moments $(S_k, Q_k)$, the screening statistics $(U^{(k)}, I^{(k)})$,
+and, at each ADMM iteration, the consensus sum $\sum_k (x_k + u_k)$.
+Each is a sum over sites, so each becomes one round of encrypted
+summation: every site encrypts its contribution under the joint public
+key, the aggregator adds the encrypted contributions, and the total is
+recovered by $n$-of-$n$ partial decryption. The local cvxpy work and
+`run_admm` are untouched.
+
+`make_threshold_master()` walks the key-generation chain across the
+sites. Each site generates its own share and keeps it; only public keys
+move along the chain, so no party — the aggregator included — ever
+holds the joint secret. So the sites have to exist before the
+aggregator does. Here we give each subgroup a site object to hold its
+share.
 
 ```{python}
 from homomorphepy import fhe_context, make_worker, make_threshold_master
@@ -60,149 +249,118 @@ master = make_threshold_master("Aggregator", cc, key_holders)
 CKKS_PARAMS
 ```
 
-Each site kept two things from that one exchange: its own secret
-share, and a copy of the public parameters. Ask a site what it is
-holding — it involves no aggregator, and what comes back is public in
-full.
+`batch_size` has to hold a full `{python} p_raw`-length vector, since
+a whole probe-wise summary rides in the slots of one encrypted value.
+
+The standardization round is the pair of column sums, encrypted: each
+site encrypts $S_k$ and $Q_k$ where they were computed, the aggregator
+sums under encryption and threshold-decrypts the pooled moments. (For
+brevity we treat $N_{\mathrm{tot}}$ as known to the aggregator; hiding
+the per-site head-counts is one more sum of the same kind.)
 
 ```{python}
-pub = [h.params for h in key_holders]
-pub[0]
-```
+enc_s = sum(h.encrypt(s["X"].sum(axis=0)) for h, s in zip(key_holders, sites, strict=True))
+enc_q = sum(h.encrypt((s["X"] ** 2).sum(axis=0))
+            for h, s in zip(key_holders, sites, strict=True))
 
-`batch_size` has to hold a full 6416-length vector, since a whole
-probe-wise summary rides in the slots of one encrypted value.
-
-## 1. Pooled standardization, under encryption
-
-Each site forms its own column sums and sums of squares and encrypts
-them where they were computed. Only the *pooled* moments are ever
-decrypted — no site's marginal distribution is revealed.
-
-```{python}
-enc_s = sum(par.encrypt(s["X"].sum(axis=0))
-            for par, s in zip(pub, sites, strict=True))
-enc_q = sum(par.encrypt((s["X"] ** 2).sum(axis=0))
-            for par, s in zip(pub, sites, strict=True))
-
-mu    = np.asarray(master.decrypt(enc_s, length=p_raw), dtype=float) / n_total
-q     = np.asarray(master.decrypt(enc_q, length=p_raw), dtype=float) / n_total
+mu = np.asarray(master.decrypt(enc_s, length=p_raw), dtype=float) / n_total
+q = np.asarray(master.decrypt(enc_q, length=p_raw), dtype=float) / n_total
 sigma = np.sqrt(np.maximum(q - mu**2, np.finfo(float).eps))
 
+pool_agree = float(np.max(np.abs(mu - mu_ref))), float(np.max(np.abs(sigma - sigma_ref)))
+pool_agree
+```
+
+The encrypted moments agree with the unencrypted ones to
+`{python} f"{pool_agree[0]:.1e}"` (mean) and
+`{python} f"{pool_agree[1]:.1e}"` (SD), the CKKS approximation error.
+The screening round works the same way: each site's
+$(U^{(k)}, I^{(k)})$ are encrypted and summed, and we confirm the
+encrypted screen selects the same probes.
+
+```{python}
 sites_std = [{**s, "X": (s["X"] - mu) / sigma} for s in sites]
-mu[:4], sigma[:4]
-```
-
-How much the encryption cost, against the same quantities computed in
-the clear:
-
-```{python}
-mu_ref = sum(s["X"].sum(axis=0) for s in sites) / n_total
-q_ref  = sum((s["X"] ** 2).sum(axis=0) for s in sites) / n_total
-sigma_ref = np.sqrt(np.maximum(q_ref - mu_ref**2, np.finfo(float).eps))
-
-float(np.max(np.abs(mu - mu_ref))), float(np.max(np.abs(sigma - sigma_ref)))
-```
-
-Essentially float64 precision — the pooling is a sum and one scalar
-multiply, so it costs one CKKS level and almost no accuracy.
-
-## 2. Screening, under encryption
-
-Each site computes a univariate Cox score and information at
-$\beta = 0$ for every probe; those are pooled under encryption and the
-top $K = 100$ by $|Z|$ are kept.
-
-```{python}
-from homomorphepy.examples.cox_lasso import _score_info_at_zero, K
-
 UI = [_score_info_at_zero(s["X"], s["time"], s["status"]) for s in sites_std]
 
-U    = np.asarray(master.decrypt(
-    sum(par.encrypt(u) for par, (u, _) in zip(pub, UI, strict=True)),
+U = np.asarray(master.decrypt(
+    sum(h.encrypt(u) for h, (u, _) in zip(key_holders, UI, strict=True)),
     length=p_raw), dtype=float)
 info = np.asarray(master.decrypt(
-    sum(par.encrypt(i) for par, (_, i) in zip(pub, UI, strict=True)),
+    sum(h.encrypt(i) for h, (_, i) in zip(key_holders, UI, strict=True)),
     length=p_raw), dtype=float)
 
 Z = U / np.sqrt(np.maximum(info, np.finfo(float).eps))
 top_idx = np.argsort(-np.abs(Z), kind="stable")[:K] + 1
 
-top_idx[:10]
+assert set(top_idx.tolist()) == set(top_ref.tolist())  # same probes as in the clear
 ```
 
-The screening step deserves care. Probes whose statistics are nearly
-tied at the $K$ boundary can swap under a one-ulp perturbation, and a
-different retained set means a different model — so the pipeline is
-built to be reproducible bit-for-bit at that boundary.
-
-Three things make that hold. The expression matrix is stored as raw
-float64 rather than text, which at 15 significant digits would drop
-bits that matter at the cutoff. The event-time ordering uses
-`np.lexsort((-status, time))`, whose key order is easy to reverse by
-accident. And the ranking uses `kind="stable"`, so ties break by index
-rather than arbitrarily.
+Standardization and screening give the same design as in the clear, so
+the consensus round is the only piece left to encrypt. It mirrors
+`plain_consensus`. Each site encrypts its own $(x_k + u_k)$. The
+aggregator sums the encrypted values, scales by $1/N$ (one
+multiplication by an unencrypted constant, which uses one level of
+multiplicative depth), and threshold-decrypts the length-$K$ average.
+Soft-thresholding is applied to that average in the clear at the
+aggregator.
 
 ```{python}
-gaps = np.diff(np.sort(np.abs(Z))[::-1][:K + 1])
-float(np.abs(gaps[-1]))     # the gap at the K=100 boundary
+def encrypted_consensus(site_x, site_u):
+    # Each site encrypts its own x_k + u_k; the per-site vector never
+    # exists in the clear outside the site. The aggregator adds the
+    # encrypted values, scales by 1/N, and decrypts only the average.
+    ct = sum(h.encrypt(x + u) for h, x, u in zip(key_holders, site_x, site_u, strict=True))
+    return np.asarray(master.decrypt(ct * (1.0 / len(site_x)), length=K), dtype=float)
 ```
-
-## 3. The lasso fit by consensus ADMM
-
-The local subproblem is a Breslow partial likelihood written as a
-cvxpy expression plus the ADMM proximal term. Only the consensus
-average leaves a site, and it is encrypted:
-
-```{python}
-#| eval: false
-ct = sum(par.encrypt(x + u)
-         for par, x, u in zip(pub, site_x, site_u, strict=True))
-w_avg = np.asarray(master.decrypt(ct * (1.0 / n_sites), length=K))
-
-# Soft threshold for the L1 penalty, applied to the consensus.
-tau = LAMBDA / (n_sites * RHO)
-z_new = np.sign(w_avg) * np.maximum(np.abs(w_avg) - tau, 0.0)
-```
-
-The ADMM runs to convergence with three per-site conic solves per
-iteration, which takes about half an hour — too slow for a
-documentation render. The results below come from a recorded run
-produced by `docs/_recorded/record_cox_lasso.py`, read out of the JSON
-it writes. The numbers are read from that file, never typed into this
-prose.
 
 ```{python}
 #| echo: false
-import json
-import math
-from pathlib import Path
-from IPython.display import Markdown
-
-from homomorphepy.examples import cox_lasso
-
-rec = json.loads(Path("_recorded/cox_lasso_run.json").read_text())
-Markdown(f"""
-| quantity | value |
-|---|---|
-| probes screened | {rec['n_probes_total']} → {rec['n_probes_screened']} |
-| ADMM iterations to convergence | {rec['n_iter']} |
-| non-zero coefficients retained | {rec['n_nonzero']} of {rec['n_probes_screened']} |
-| ADMM fit vs centralized lasso | {rec['admm_vs_centralized']:.1e} |
-| ADMM stopping tolerance | {cox_lasso.TOL:.0e} |
-| encrypted pooling error, means | {rec['pool_agree_mu']:.1e} |
-| encrypted pooling error, SDs | {rec['pool_agree_sigma']:.1e} |
-
-*Recorded run: {rec['wall_clock_minutes']:.0f} min.*
-""")
+Markdown(
+    f"The recorded run passes this function in place of `plain_consensus`. "
+    f"The encrypted ADMM ran for {rec['n_iter']} iterations, and its "
+    f"coefficients differ from the unencrypted run by at most "
+    f"{rec['admm_vs_plain']:.1e}, the CKKS approximation error."
+)
 ```
 
-The table says the encrypted fit *arrives* at the centralized answer.
-The trajectory says *how*. Below are the consensus iterates $z^t$ for
-the eight probes with the largest coefficients at convergence, against
-the centralized fit as a horizontal reference — the recorded run keeps
-one row per ADMM sweep, so this is the same run the table summarizes,
-not a second one.
+## Comparison with the centralized fit
+
+We compare the encrypted consensus to the centralized cvxpy fit on
+both the standardized scale (where ADMM lives) and the
+back-transformed original gene-expression scale.
+
+```{python}
+#| echo: false
+import pandas as pd
+
+z_enc = np.asarray(rec["beta_admm"])
+beta_c = np.asarray(rec["beta_centralized"])
+sigma_K = np.asarray(rec["sigma_K"])
+pd.DataFrame({
+    "scale": ["standardized", "original"],
+    "max abs diff": [np.max(np.abs(z_enc - beta_c)),
+                     np.max(np.abs(z_enc / sigma_K - beta_c / sigma_K))],
+    "L1 diff": [np.sum(np.abs(z_enc - beta_c)),
+                np.sum(np.abs(z_enc / sigma_K - beta_c / sigma_K))],
+}).round(4)
+```
+
+```{python}
+#| echo: false
+all_recovered = rec["n_active_intersection"] == rec["n_nonzero_centralized"]
+Markdown(
+    f"The active set has {rec['n_nonzero_centralized']} nonzero "
+    f"coefficients in the centralized fit and {rec['n_nonzero']} in the "
+    f"encrypted ADMM fit; the intersection is "
+    f"{rec['n_active_intersection']}"
+    + (" — every probe selected by the centralized fit is recovered by "
+       "the encrypted distributed protocol." if all_recovered else ".")
+)
+```
+
+The figure below shows the consensus trajectory $z^t$ for the eight
+probes with largest $|z|$ at convergence, with the centralized fit
+drawn as a horizontal reference.
 
 ```{python}
 #| label: fig-admm
@@ -210,20 +368,17 @@ not a second one.
 #| fig-width: 9
 #| fig-height: 4.8
 import matplotlib.pyplot as plt
-import numpy as np
 
 traj = np.asarray(rec["trajectory"])          # (n_iter, K)
-beta_c = np.asarray(rec["beta_centralized"])
-top8 = np.argsort(-np.abs(np.asarray(rec["beta_admm"])))[:8]
+top8 = np.argsort(-np.abs(z_enc))[:8]
+screened = np.asarray(rec["top_idx"]) - 1     # 0-based probe columns
 
 fig, axes = plt.subplots(2, 4, figsize=(9, 4.8), constrained_layout=True)
 it = np.arange(1, traj.shape[0] + 1)
 for ax, j in zip(axes.ravel(), top8, strict=True):
     ax.plot(it, traj[:, j], lw=1.6, color="steelblue")
     ax.axhline(beta_c[j], ls="--", color="black", lw=1.0)
-    # Position within the screened set, which is what `trajectory`
-    # is indexed by; the screen itself is reported above.
-    ax.set_title(f"screened probe {j + 1}", fontsize=9)
+    ax.set_title(f"probe {probe_names[screened[j]]}", fontsize=9)
     ax.tick_params(labelsize=8)
 for ax in axes[-1]:
     ax.set_xlabel("ADMM iteration", fontsize=9)
@@ -233,51 +388,84 @@ for ax in axes[:, 0]:
 plt.show()
 ```
 
-The iterates approach the centralized values and stay there. These are
-the eight coefficients the lasso *kept*, so every panel converges to a
-non-zero reference; the shrinkage the penalty applies elsewhere is in
-the count above, not in this figure.
-
-Two things are worth noticing. The dashed reference is not a target the
-loop was given — the centralized fit is computed separately, as one
-pooled convex program, and the iterates find it. And the encrypted
-averaging step sits inside every one of those iterations, so any
-systematic error it introduced would accumulate along the path rather
-than cancel; the trajectories do not drift.
-
-Reproduce with:
+Reproduce the recorded run with:
 
 ```bash
 OMP_NUM_THREADS=2 uv run python docs/_recorded/record_cox_lasso.py
 ```
 
-The lasso retains `{python} rec['n_nonzero']` of the
-`{python} rec['n_probes_screened']` screened probes.
+It took `{python} f"{rec['wall_clock_minutes']:.0f}"` minutes when
+recorded.
 
-The ADMM fit agrees with the centralized lasso — the same penalized
-problem solved as one pooled convex program — to
-`{python} f"{rec['admm_vs_centralized']:.1e}"`. Read that as a
-statement about **the ADMM stopping rule, not about encryption**: the
-loop halts when its residuals fall below
-`{python} f"{cox_lasso.TOL:.0e}"`, so the iterate is near the optimum
-rather than at it, and the gap above sits below that threshold as it
-should.
+## What the protocol hides and reveals
 
-The encryption cost is a separate and much smaller quantity — the
-pooled moments come back accurate to
-`{python} f"{rec['pool_agree_mu']:.0e}"`, some
-`{python} round(math.log10(rec['admm_vs_centralized'] / rec['pool_agree_mu']))`
-orders tighter than the ADMM's own convergence gap. Conflating the two
-is how an optimizer's stopping tolerance gets reported as
-cryptographic error.
+The aggregator learns the pooled per-probe mean and SD (round 1), a
+per-probe stratified univariate Cox $|Z|$ statistic and the indices of
+the top-$K$ screened probes (round 2), and the consensus $z^t$ at every
+ADMM iteration. Each is an aggregated population-level statistic over
+`{python} n_total` patients, not patient-level data. None of the
+per-site design matrices $X_k$, the per-site $(\mu, \sigma^2)$
+contributions, the per-site $(U, I)$ contributions, or the per-site
+$(x_k + u_k)$ vectors ever appear in cleartext anywhere in the
+protocol. Decryption at every step is $n$-of-$n$ threshold: no single
+party — the aggregator included — can recover any intermediate quantity
+unilaterally.
+
+Two steps on this page would not exist in a real deployment. The
+unencrypted reference pass forms the per-site averages that the
+protocol keeps encrypted, and the centralized solve pools all the
+data. We can run both only because this page holds all three sites'
+data in one process. The choice $\rho =$ `{python} f"{cox_lasso.RHO:g}"`
+depends on them too: it was kept because it agreed best with the
+centralized solve, which a deployment cannot compute.
+
+A deployment can instead choose $\rho$ on a surrogate cohort built from
+public design facts, as [consensus ADMM under
+DP](consensus-admm-dp.qmd) does. When the protocol also spends a
+privacy budget, as on that page, encrypting the sweep is not enough,
+and the constants have to be chosen from data that does not count
+against the budget.
+
+## Discussion
+
+1. **cvxpy problems work unchanged.** Each site solves its local
+   Cox-lasso problem in the clear. Only the consensus update is
+   encrypted. The cvxpy `Problem(Minimize(...))` is the same as in the
+   clear, and `run_admm` is called with `encrypted_consensus` instead
+   of `plain_consensus`.
+2. **Encryption does not change the fit.** The encrypted fit matches
+   the unencrypted ADMM to `{python} f"{rec['admm_vs_plain']:.1e}"`.
+   The remaining gap to the centralized solve
+   (`{python} f"{rec['plain_vs_centralized']:.1e}"`) comes from
+   stopping ADMM at a finite tolerance, not from the encryption.
+3. **No single party holds the secret key.** Each site generated its
+   own share during key generation and kept it. The aggregator holds
+   only the joint public key. No single party can decrypt an
+   intermediate value, and each round's result is decrypted only when
+   every site contributes a partial decryption.
+4. **DPP keeps the inner loop fast.** Each site's cvxpy problem is
+   built once at setup; ADMM iterations only update the `Parameter`
+   values.
+
+## Limitations
+
+- **Honest-but-curious trust.** A site that misreports its local
+  $(x_k + u_k)$ can corrupt the consensus; detecting this needs
+  commitments or zero-knowledge proofs not implemented here.
+- **The aggregator sees the trajectory $\{z^t\}$.** Per-iteration
+  consensus values are revealed in the clear (after fusion) so the
+  loop can decide convergence.
+- **No output privacy.** The released $\hat\beta = z^\star$ is the same
+  coefficient vector as the centralized fit; output-level protection is
+  out of scope here and is demonstrated on the [consensus ADMM under
+  DP](consensus-admm-dp.qmd) page.
 
 ## On the iteration count
 
-The run converges in `{python} rec['n_iter']` iterations, but that
-number is a property of this problem rather than a guarantee: the loop
-stops when residuals first fall below a fixed threshold, so the count
-is where a continuous quantity crosses a line. When a residual lands
-near the threshold, CKKS noise alone can shift the count by one.
+The loop stops when residuals first fall below a fixed threshold, so
+the count is where a continuous quantity crosses a line. When a
+residual lands near the threshold, CKKS noise alone can shift the count
+by one.
 
 ## Breslow ties here, Efron in the other Cox example
 
