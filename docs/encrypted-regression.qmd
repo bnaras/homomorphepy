@@ -30,9 +30,8 @@ The scheme is CKKS, since the quantities are real-valued.
 
 ## Training, in the clear
 
-The cohort is a shipped fixture rather than a fresh draw, so this page
-and its R counterpart fit the same 500 patients and can be compared
-coefficient by coefficient.
+The cohort is a fixed training set of 500 patients shipped with the
+package, rather than a fresh draw.
 
 ```{python}
 import numpy as np
@@ -48,8 +47,8 @@ beta = fit_logistic(age, biomarker, outcome)
 dict(zip(["intercept", "age", "biomarker"], np.round(beta, 4)))
 ```
 
-The same fit performed in R is carried in the fixture, so the agreement
-is checkable rather than asserted:
+The shipped data also carry an independently computed fit of the same
+model, so the agreement is checkable rather than asserted:
 
 ```{python}
 reference = np.asarray(fx["expected"]["beta_fit"], dtype=float)

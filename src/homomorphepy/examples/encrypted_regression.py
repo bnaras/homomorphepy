@@ -18,10 +18,10 @@ depth 8 where the linear example needed 2.
 Where the numbers come from
 ---------------------------
 
-The training cohort is a shipped fixture rather than a fresh draw, so
-this example and its R counterpart fit the same 500 patients and can be
-compared coefficient by coefficient. The scoring panel of 16 patients
-is a fixed table for the same reason.
+The training cohort is a fixed set of 500 patients shipped with the
+package rather than a fresh draw, together with an independently
+computed fit of the same model to check against. The scoring panel of
+16 patients is a fixed table.
 """
 
 from __future__ import annotations
