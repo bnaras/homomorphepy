@@ -12,9 +12,9 @@ jobs:
     # 24.04, CPython 3.12, x86_64 build; see pyproject.toml.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
 
