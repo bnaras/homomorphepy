@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "generated_by": "homomorpheR/data-raw/export_parity_fixtures.R",
+  "homomorpheR": "1.0",
+  "openfhe_R": "1.5.1.2",
+  "R_version": "4.6.1",
+  "rng": {
+    "kind": ["Mersenne-Twister", "Inversion", "Rejection"],
+    "note": "R's rpois/rbinom/sample/rnorm have no numpy equivalent; these fixtures are the only way both languages see the same inputs."
+  },
+  "contracts": {
+    "forced_categoricals": "Categorical codings are forced from the manifest, never inferred. Site order is protocol semantics (lead decryptor).",
+    "float_matrices": "Raw little-endian float64 with a sha256 over those bytes; never CSV.",
+    "integrity": "Every file carries a sha256; verify on load."
+  },
+  "files": [
+    {
+      "file": "dlbcl_clinical.csv",
+      "kind": "table",
+      "bytes": 46885,
+      "sha256": "27dfccfe7b3ed6c335393f5ff0521182bbae895fda15a694aadac138eabdb7db",
+      "nrow": 235,
+      "ncol": 12,
+      "columns": ["ID", "Set", "Subgroup", "IPI", "time", "status", "GCB_sig", "LN_sig", "Prolif_sig", "BMP6", "MHC2_sig", "Score"],
+      "csv_note": "All fields are quoted; numerics are 17-significant- digit strings that round-trip float64 exactly. Cast per `dtypes`; do not rely on inference.",
+      "dtypes": {
+        "ID": "int64",
+        "Set": "str",
+        "Subgroup": {
+          "dtype": "category",
+          "categories": ["GCB", "ABC", "Type III"],
+          "ordered": true,
+          "note": "Level order is protocol semantics: sites are visited in this order and categories[[1]] is the lead decryptor."
+        },
+        "IPI": "str",
+        "time": "float64",
+        "status": "int64",
+        "GCB_sig": "float64",
+        "LN_sig": "float64",
+        "Prolif_sig": "float64",
+        "BMP6": "float64",
+        "MHC2_sig": "float64",
+        "Score": "float64"
+      },
+      "site_order": ["GCB", "ABC", "Type III"],
+      "site_sizes": {
+        "GCB": 115,
+        "ABC": 71,
+        "Type III": 49
+      },
+      "provenance": "Rosenwald et al. (2002) LLMPP DLBCL cohort; five zero-follow-up patients excluded following Bayle et al. (2025)."
+    },
+    {
+      "file": "dlbcl_gex.f64.gz",
+      "kind": "matrix_f64",
+      "bytes": 5045134,
+      "sha256": "777a10c34b72761ffa0537b0162189c057f0e153c02902f520084dcf9ef28cfe",
+      "shape": [235, 6416],
+      "order": "C",
+      "dtype": "float64",
+      "endian": "little",
+      "compression": "gzip",
+      "sha256_content": "aa02f035afcc2ed7997cc464bd47e65d65310f5fbc06141dc0b03bb8af5df428",
+      "content_note": "sha256_content is over the UNCOMPRESSED bytes; sha256 is over the .gz file. Verify content.",
+      "rownames_file": "dlbcl_gex_rownames.txt",
+      "colnames_file": "dlbcl_gex_colnames.txt",
+      "alignment": "as.character(dlbcl$ID) must equal the row names, elementwise and in order"
+    },
+    {
+      "file": "dlbcl_gex_rownames.txt",
+      "kind": "lines",
+      "bytes": 865,
+      "sha256": "165fd3a9075399c33549d4848e7653e6d1ccd9c78acd6e6f2850d476b0dd1697",
+      "n": 235,
+      "dtype": "str"
+    },
+    {
+      "file": "dlbcl_gex_colnames.txt",
+      "kind": "lines",
+      "bytes": 38496,
+      "sha256": "624368cd46e61bfc1bf4fa90ef829ac19f2d52649e3895ca20b538468653c50b",
+      "n": 6416,
+      "dtype": "str"
+    },
+    {
+      "file": "mle_poisson.json",
+      "kind": "json",
+      "bytes": 498,
+      "sha256": "0a40aaa167bc6734d614a2d285777277adc432e4f314acfc5fa1b5ae7bb0ed1d",
+      "generator": "rpois",
+      "note": "R rpois (Ahrens-Dieter) is not reproducible by numpy."
+    },
+    {
+      "file": "aggregation_sites.json",
+      "kind": "json",
+      "bytes": 90357,
+      "sha256": "1a0f40691481f9be39bfa7d29718b9d0eb15354751affe4024a422fb508b1192",
+      "generator": "sample/runif",
+      "note": "sex is a plain character vector here, not a factor."
+    },
+    {
+      "file": "query_count.json",
+      "kind": "json",
+      "bytes": 4581,
+      "sha256": "2f9d988dbe36bd66859d00965784ce5f581fdbcd74151ac7edd97bf8a349173d",
+      "generator": "sample/rnorm",
+      "expected_total": 11
+    },
+    {
+      "file": "encrypted_regression.json",
+      "kind": "json",
+      "bytes": 22401,
+      "sha256": "817278454e0dd39685124f0cff917327eea214d2d8a79432e88aa76f91daa0b4",
+      "generator": "rnorm/rbinom",
+      "note": "R rbinom (BTPE) is not reproducible by numpy."
+    },
+    {
+      "file": "secure_inference.json",
+      "kind": "json",
+      "bytes": 652,
+      "sha256": "893f6997a07cb8a2ba2b43e19717228b0ee2dafa35f8d219e8a689ecde084b68",
+      "generator": "none"
+    },
+    {
+      "file": "admm_cohort.json",
+      "kind": "json",
+      "bytes": 88239,
+      "sha256": "453b318dee86da13633dc518352154bb615d10a38f1f916d38fc67ffd1dd46f2",
+      "generator": "rnorm/rbinom",
+      "p": 4,
+      "N": 3
+    },
+    {
+      "file": "admm_dp_cohort.json",
+      "kind": "json",
+      "bytes": 309189,
+      "sha256": "f47691368a9abdfdf4d26ea2b6ebaa27416ae459dd6c7dea6c8c4fa5d73c53d7",
+      "generator": "rnorm/rbinom/runif",
+      "p": 4,
+      "N": 3
+    },
+    {
+      "file": "cox_loglik.json",
+      "kind": "reference",
+      "bytes": 18446,
+      "sha256": "14b39ad3adc8ab303f15032ced107b80254a1b11329cafb0ab31072947bc8310",
+      "n_cases": 20,
+      "ties": ["efron", "breslow"],
+      "consumer": "statsmodels PHReg(ties='efron').loglike(beta)"
+    },
+    {
+      "file": "cvxr_consensus_golden.json",
+      "kind": "golden",
+      "bytes": 131152,
+      "sha256": "c6d1e4e45ae15f7b493b1138d2568050bd39a1a6009e40031ed6d8489e3d8ea3",
+      "n_iter_enc": 112,
+      "K": 100
+    }
+  ]
+}

@@ -23,7 +23,13 @@
 # macOS and then fail at import. There is no macOS wheel.
 #
 # Usage:
-#   bash scripts/build-openfhe-wheel.sh [--python 3.12] [--jobs N]
+#   OPENFHE_PYTHON_SRC=/path/to/openfhe-python \
+#   OPENFHE_HOME=/path/to/openfhe/install \
+#     bash scripts/build-openfhe-wheel.sh [--python 3.12] [--jobs N] [--clean]
+#
+# OPENFHE_PYTHON_SRC is an openfhe-python source checkout; OPENFHE_HOME
+# is the OpenFHE C++ install prefix it builds against (the directory
+# holding lib/OpenFHE). Build scratch goes under build/ in this repo.
 #
 # Output: dist/openfhe-<ver>-cp3XX-cp3XX-macosx_<arch>.whl
 
@@ -41,17 +47,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+: "${OPENFHE_PYTHON_SRC:?set OPENFHE_PYTHON_SRC to an openfhe-python source checkout}"
+: "${OPENFHE_HOME:?set OPENFHE_HOME to the OpenFHE install prefix (holding lib/OpenFHE)}"
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MONOREPO="$(cd "$HERE/../.." && pwd)"
-SRC="$MONOREPO/openfhe/openfhe-python"
-OPENFHE_PREFIX="$MONOREPO/temp/openfhe-rlibomp"
-BUILD="$MONOREPO/temp/openfhe-python-build"
-STAGE="$MONOREPO/temp/openfhe-wheel-stage"
+SRC="$OPENFHE_PYTHON_SRC"
+OPENFHE_PREFIX="$OPENFHE_HOME"
+SCRATCH="$HERE/build"
+BUILD="$SCRATCH/openfhe-python-build"
+STAGE="$SCRATCH/openfhe-wheel-stage"
 DIST="$HERE/dist"
 
-for d in "$SRC" "$OPENFHE_PREFIX"; do
+for d in "$SRC" "$OPENFHE_PREFIX/lib/OpenFHE"; do
     [[ -d "$d" ]] || { echo "ERROR: missing $d" >&2; exit 1; }
 done
+mkdir -p "$SCRATCH"
 
 echo "== configuration =="
 echo "  source      : $SRC"
@@ -62,7 +72,7 @@ echo
 # Interpreter and pybind11 both have to come from the SAME environment,
 # or pybind11_add_module builds against the wrong Python ABI.
 echo "== provisioning build environment =="
-BUILD_VENV="$MONOREPO/temp/openfhe-build-venv"
+BUILD_VENV="$SCRATCH/openfhe-build-venv"
 uv venv --python "$PYVER" "$BUILD_VENV" --quiet --allow-existing
 VENV_PY="$BUILD_VENV/bin/python"
 uv pip install --python "$VENV_PY" --quiet pybind11 wheel
@@ -82,14 +92,14 @@ cmake -S "$SRC" -B "$BUILD" \
       -DCMAKE_PREFIX_PATH="$PYBIND_CMAKE" \
       -DPython_EXECUTABLE="$VENV_PY" \
       -DPYTHON_EXECUTABLE_PATH="$VENV_PY" \
-      > "$MONOREPO/temp/openfhe-python-build.configure.log" 2>&1 \
-  || { echo "CONFIGURE FAILED — see temp/openfhe-python-build.configure.log" >&2
-       tail -25 "$MONOREPO/temp/openfhe-python-build.configure.log" >&2; exit 1; }
+      > "$SCRATCH/openfhe-python-build.configure.log" 2>&1 \
+  || { echo "CONFIGURE FAILED — see build/openfhe-python-build.configure.log" >&2
+       tail -25 "$SCRATCH/openfhe-python-build.configure.log" >&2; exit 1; }
 
 cmake --build "$BUILD" -j "$JOBS" \
-      > "$MONOREPO/temp/openfhe-python-build.build.log" 2>&1 \
-  || { echo "BUILD FAILED — see temp/openfhe-python-build.build.log" >&2
-       tail -25 "$MONOREPO/temp/openfhe-python-build.build.log" >&2; exit 1; }
+      > "$SCRATCH/openfhe-python-build.build.log" 2>&1 \
+  || { echo "BUILD FAILED — see build/openfhe-python-build.build.log" >&2
+       tail -25 "$SCRATCH/openfhe-python-build.build.log" >&2; exit 1; }
 
 MODULE="$(find "$BUILD" -maxdepth 1 -name "openfhe*.so" | head -1)"
 [[ -n "$MODULE" ]] || { echo "ERROR: no extension module produced" >&2; exit 1; }
@@ -190,7 +200,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 fi
 
 REMAINING="$(otool -L "$STAGE/openfhe/$(basename "$MODULE")" "$STAGE/openfhe/lib"/*.dylib \
-             | grep -E '^\s' | grep -E "R\.framework|$MONOREPO" || true)"
+             | grep -E '^\s' | grep -E "R\.framework|$OPENFHE_PREFIX|$SCRATCH" || true)"
 if [[ -n "$REMAINING" ]]; then
     echo "  WARNING: absolute paths survive rewriting:" >&2
     echo "$REMAINING" >&2
