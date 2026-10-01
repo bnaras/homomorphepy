@@ -7,7 +7,8 @@ license = "MIT"
 authors = [{ name = "Balasubramanian Narasimhan", email = "naras@stat.Stanford.EDU" }]
 # 3.10 is the openfhe-python source-build floor (its CMake branches on
 # >= 3.10). The PyPI `openfhe` wheel is narrower still — CPython 3.12,
-# x86_64, Ubuntu — see the `openfhe` extra and docs/install.md.
+# x86_64, Ubuntu — see the `openfhe` extra and the README section
+# "Installing the crypto backend".
 requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -76,7 +77,7 @@ include = ["src/homomorphepy/**", "tests/**", "README.md"]
 testpaths = ["tests"]
 addopts = "-m 'not slow'"
 markers = [
-    "openfhe: requires the openfhe extension module (see docs/install.md)",
+    "openfhe: requires the openfhe extension module (see the README, Installing the crypto backend)",
     "slow: minutes rather than seconds; run with `pytest -m slow`",
 ]
 

@@ -81,8 +81,8 @@ def make_noisy_local(sigma, n_sites, rng):
     return noisy_local
 ```
 
-Each fit is a full optimizer run through the encrypted channel, and
-the whole sweep takes several minutes, so the fits are recorded once:
+Each fit is a full optimizer run through the encrypted channel, so
+the sweep is recorded once rather than run on every render:
 
 ```bash
 OMP_NUM_THREADS=2 uv run python docs/_recorded/record_dp_sweep.py
@@ -131,6 +131,9 @@ def sweep_table(method):
     return md_table(header, body,
                     f"{label} over the threshold-DP nLL at {len(body)} values of $\\sigma$")
 ```
+
+The recorded sweep took `{python} f"{rec['wall_clock_minutes']:.1f}"`
+minutes.
 
 ## Mechanical correctness: $\sigma = 0$ reproduces the threshold fit
 

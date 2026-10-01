@@ -39,7 +39,8 @@ homomorphepy needs the `openfhe` extension module, which is not importable.
 
   macOS, Windows, or any other CPython:
       No wheel exists. Build openfhe-python from source against a
-      local OpenFHE and install the resulting wheel. See docs/install.md.
+      local OpenFHE and install the resulting wheel. See the README,
+      section "Installing the crypto backend".
 
   Already ran pip successfully and still see this?
       That is the expected failure mode off Linux/CPython-3.12: the

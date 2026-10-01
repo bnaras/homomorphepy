@@ -41,9 +41,10 @@ of encrypted summation, and confirm that the encrypted fit reproduces
 the in-the-clear reference.
 
 Standardization and screening run live on this page. The two ADMM
-runs take over an hour together, so their results come from a
-recorded run produced by `docs/_recorded/record_cox_lasso.py`, which
-calls the same code; the page reads the JSON it writes.
+runs are too slow for a render, so their results come from a recorded
+run produced by `docs/_recorded/record_cox_lasso.py`, which calls the
+same code; the page reads the JSON it writes and reports the run's
+wall-clock time at the end.
 
 ## The global problem and its consensus split
 

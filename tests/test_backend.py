@@ -28,7 +28,7 @@ def test_missing_backend_explains_the_mislabeled_wheel():
     # Linux/CPython-3.12 and the import fails afterwards.
     assert "py3-none-any" in msg or "mislabeled" in msg
     assert "1.5.1.0.24.4" in msg
-    assert "docs/install.md" in msg
+    assert "Installing the crypto backend" in msg
 
 
 def test_thread_env_is_set_and_reported():

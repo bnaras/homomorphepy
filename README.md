@@ -107,8 +107,9 @@ uv pip install 'openfhe==1.5.1.0.24.4'   # Ubuntu 22.04: ...0.22.4
 
 Never pin with a wildcard: the Ubuntu release is encoded in the
 *version*, not the wheel tag, so `openfhe==1.5.1.0.*` resolves to the
-24.04 build on 22.04 too. Everywhere else, build openfhe-python from
-source against a local OpenFHE — see `docs/install.md`.
+24.04 build on 22.04 too. Everywhere else, build
+[openfhe-python](https://github.com/openfheorg/openfhe-python) from
+source against a local OpenFHE and install the resulting wheel.
 
 ### Threads
 
@@ -139,9 +140,9 @@ cd docs && OMP_NUM_THREADS=2 uv run quarto render
 ```
 
 Two computations are too slow to run on every render — the Cox-lasso
-consensus ADMM (~30 min) and the differential-privacy sweep (~10 min).
-Those are recorded once by the scripts in `docs/_recorded/`, which
-write the JSON the pages read. Nothing is hidden: re-running the script
+consensus ADMM and the Gaussian-noise sweep. Those are recorded once
+by the scripts in `docs/_recorded/`, which write the JSON the pages
+read, wall-clock time included. Nothing is hidden: re-running a script
 regenerates the numbers.
 
 ## Development
