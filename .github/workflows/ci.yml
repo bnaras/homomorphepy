@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # The PyPI openfhe wheel pinned in the `openfhe` extra is the Ubuntu
+    # 24.04, CPython 3.12, x86_64 build; see pyproject.toml.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: uv sync --locked --extra openfhe --extra stats
+
+      - name: Check openfhe imports
+        run: uv run --no-sync python -c "import openfhe"
+
+      - name: Test
+        run: uv run --no-sync pytest
+
+      - name: Build
+        run: uv build
+
+      - name: Check the wheel carries LICENSE and fixtures
+        run: >-
+          uv run --no-sync python -c
+          'import glob, zipfile;
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist();
+          assert any(n.endswith("licenses/LICENSE") for n in names), "LICENSE missing";
+          assert any("homomorphepy/fixtures/" in n for n in names), "fixtures missing"'
