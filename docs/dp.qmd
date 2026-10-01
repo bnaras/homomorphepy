@@ -1,5 +1,5 @@
 ---
-title: "Cox regression under differential privacy"
+title: "Cox regression with Gaussian noise"
 subtitle: "A demonstration"
 ---
 
@@ -121,7 +121,7 @@ def md_table(header, body, caption):
 
 def sweep_table(method):
     fits = rows[(rows["method"] == method) & (rows["sigma"] > 0)]
-    header = ["$\\sigma$", "Evaluations", *covariates,
+    header = ["$\\sigma$", "Queries", *covariates,
               "$\\max_j \\lvert \\hat\\beta_j - \\hat\\beta_j^{\\text{centralized}} \\rvert$"]
     body = [[pow10(r.sigma), str(r.n_queries),
              *(f"{r.coefficients[c]:.6f}" for c in covariates),
@@ -182,7 +182,7 @@ after `{python} dp.NM_MAXFEV` evaluations.
 sweep_table("Nelder-Mead")
 ```
 
-CONCLUSION
+Fidelity decays as $\sigma$ grows.
 
 ## Privacy budget
 

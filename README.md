@@ -48,7 +48,7 @@ documentation page that builds the same protocol step by step:
 | `secure_inference` | A lab scoring patients it cannot see — and the attack this does *not* prevent. |
 | `encrypted_regression` | The same with a logistic model: a sigmoid evaluated on encrypted values. |
 | `similarity` | Retrieval across sites whose models disagree, under threshold keys and joint rotation keys. |
-| `dp` | What adding differential privacy on top costs, for the Cox fit and for consensus ADMM. A demonstration, not a recommendation. |
+| `dp` | What adding site-side Gaussian noise on top costs, for the Cox fit and for consensus ADMM. A demonstration, not a privacy guarantee or a recommendation. |
 
 The documentation also has a Precision page on what it means for an
 encrypted result to be correct.

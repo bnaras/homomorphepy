@@ -42,7 +42,7 @@ marginally more accurate, but it is not load-bearing. A deeper computation
 with a larger scaling factor could change the balance, so
 ``tests/test_examples.py`` records the measurement and will flag it if
 the two settings ever stop agreeing. The step *does* become
-load-bearing under differential privacy, where the injected noise is
+load-bearing with the Gaussian noise of :mod:`.dp`, where the injected noise is
 many orders larger than CKKS's.
 
 One further wrinkle: a parameter outside the support makes the

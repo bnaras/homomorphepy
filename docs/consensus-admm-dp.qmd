@@ -1,5 +1,5 @@
 ---
-title: "Consensus ADMM under differential privacy"
+title: "Consensus ADMM with Gaussian noise"
 subtitle: "A demonstration"
 ---
 

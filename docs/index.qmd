@@ -291,14 +291,14 @@ neither willing to reveal theirs.
 | [Encrypted logistic prediction](encrypted-regression.qmd) | The same, with a sigmoid — a non-polynomial function evaluated without decrypting. |
 | [Federated similarity search](similarity.qmd) | Retrieval across sites whose models disagree, under threshold keys and joint rotation keys. |
 
-**Adding differential privacy.** A demonstration of what it costs, not
-a recommendation to do it. The same mechanism is applied to two
-protocols, and the costs differ.
+**Adding Gaussian noise.** A demonstration of what it costs, not a
+privacy guarantee or a recommendation to do it. The same mechanism is
+applied to two protocols, and the costs differ.
 
 | Example | What it shows |
 |---|---|
-| [Cox under DP](dp.qmd) | Noise on a scalar objective, and the optimizer that stops working. |
-| [Consensus ADMM under DP](consensus-admm-dp.qmd) | Noise on the consensus average, with $\rho$ and the iteration count chosen without the data. |
+| [Cox with Gaussian noise](dp.qmd) | Noise on a scalar objective, and the optimizer that stops working. |
+| [Consensus ADMM with Gaussian noise](consensus-admm-dp.qmd) | Noise on the consensus average, with $\rho$ and the iteration count chosen without the data. |
 
 ## Installing
 

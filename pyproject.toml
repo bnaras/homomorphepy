@@ -1,6 +1,6 @@
 [project]
 name = "homomorphepy"
-version = "1.5.1.dev0"
+version = "1.0"
 description = "Multi-site privacy-preserving statistics over homomorphic encryption — the Python twin of homomorpheR"
 readme = "README.md"
 license = "MIT"
@@ -64,12 +64,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/homomorphepy"]
+# The staged fixtures are gitignored (the monorepo's fixtures/parity/ is
+# the committed copy), and hatchling skips VCS-ignored files unless they
+# are declared artifacts.
+artifacts = ["src/homomorphepy/fixtures/*"]
 
 [tool.hatch.build.targets.sdist]
 # Fixtures are staged in by fixtures/sync_fixtures.sh from the monorepo
 # and must travel in the sdist: the published standalone repo cannot
 # reach back into the monorepo, and users have no R to regenerate them.
 include = ["src/homomorphepy/**", "tests/**", "README.md"]
+artifacts = ["src/homomorphepy/fixtures/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

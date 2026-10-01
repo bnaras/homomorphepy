@@ -59,7 +59,7 @@ CKKS_PARAMS = dict(
 # more thing to explain. (Separately measured: the encrypted objective
 # is accurate to ~1e-13, so the step could be shrunk freely if it ever
 # did matter -- the CKKS noise floor is not the binding constraint
-# here. Under differential privacy it is; see :mod:`.dp`.)
+# here. With the Gaussian noise of :mod:`.dp` added, it is.)
 
 # The convergence criterion, and why it is L-BFGS-B rather than BFGS.
 #
