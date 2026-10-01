@@ -255,8 +255,10 @@ sends it. It learns only the scores that come back.
 patient. Its adapter and its database stay put; only encrypted scores
 leave. Note what it never does: decrypt. It cannot.
 
-**The aggregator** collects the encrypted scores and runs the $n$-of-$n$
-decryption ceremony on each, then sorts. It holds no key share.
+**The aggregator** collects the encrypted scores, with each
+candidate's site and local index in the clear, and runs the
+$n$-of-$n$ decryption ceremony on each, then sorts. It holds no key
+share, and after fusion it holds every candidate's score.
 
 ## The whole protocol
 
@@ -269,9 +271,9 @@ for name, i, score in r.top_k:
     print(f"  {name} patient {i}: {score:.6f}")
 ```
 
-Nothing above was decrypted except the final scores, and those only
-through the $n$-of-$n$ ceremony. The aggregator saw encrypted values
-throughout.
+Nothing above was decrypted except the candidate scores, and those
+only through the $n$-of-$n$ ceremony. The aggregator holds every
+candidate's score after fusion and returns the top $k$.
 
 ## Does it give the right answer?
 

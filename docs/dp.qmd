@@ -1,6 +1,6 @@
 ---
 title: "Cox regression under differential privacy"
-subtitle: "What it costs to add DP on top of a lossless protocol"
+subtitle: "A demonstration"
 ---
 
 ```{python}
@@ -10,30 +10,59 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-::: {.callout-important}
-## A demonstration, not a recommendation
+## Introduction
 
-The threshold-FHE Cox fit of [Cox with threshold keys](cox-threshold.qmd)
-matches the cleartext fit, no single party can decrypt, and the
+This page is a demonstration. The previous page, [Cox with threshold
+keys](cox-threshold.qmd), fits the Cox model under threshold FHE: the
+fit matches the cleartext fit, no single party can decrypt, and the
 aggregator sees only the joint log-likelihood $\ell(\beta)$ at each
-optimizer query. Those values are what the protocol reveals.
-Differential privacy releases a deliberately perturbed aggregate, to
-bound what repeated queries can reveal. This page shows what that costs. It is
-not advice to add it.
-:::
+optimizer query.
 
-## The mechanism
+Here we ask what happens if each site also adds Gaussian noise of the
+kind an *output differential privacy* mechanism uses. The sensitivity
+$\Delta = 1$ below is a placeholder, so the $\varepsilon$ values are
+not a privacy guarantee. Adding the
+noise takes one extra `rng.normal()` call per site per query. With the
+optimizers used here, the fits are poor at any noise level that gives
+a small $\varepsilon$. The page runs the fits and reports the numbers.
 
-The Gaussian mechanism [@DworkRoth2014, §3.5.3] releases the aggregate
-plus $\mathcal{N}(0, \sigma^2)$. Each of the $N$ sites adds
-$\mathcal{N}(0, \sigma^2/N)$ to its own contribution *before
-encrypting*, so the decrypted aggregate carries $\mathcal{N}(0, \sigma^2)$
-exactly. No party holds the noiseless aggregate at any point — an aggregator that is compromised sees encrypted
-*already noised* contributions.
+## A brief output-DP primer
 
-That is the only change to the site function. Everything else — the
-threshold keys, the aggregation, the optimizer — is the [threshold Cox
-example](cox-threshold.qmd) unmodified:
+Given a query $f$ on a dataset $D$, the *Gaussian mechanism*
+[@DworkRoth2014, §3.5.3] releases
+$\tilde f(D) = f(D) + \mathcal{N}(0, \sigma^2)$. If $f$'s
+*sensitivity* (the largest change $f$ can undergo when one record is
+added or removed) is $\Delta$, then for any
+$\varepsilon \in (0, 1)$ and $\delta > 0$, choosing
+$\sigma \geq \Delta \sqrt{2\ln(1.25/\delta)}/\varepsilon$ makes a
+single release of $\tilde f$ satisfy $(\varepsilon, \delta)$
+differential privacy.
+
+The optimizer issues many queries, so the per-query budget composes.
+We use *zCDP composition* [@BunSteinke2016]: the Gaussian mechanism is
+$\rho$-zCDP with $\rho = (\Delta/\sigma)^2/2$; $T$ queries compose to
+$T\rho$; and that converts to $(\varepsilon, \delta)$ via
+$\varepsilon = \rho + 2\sqrt{\rho \log(1/\delta)}$.
+
+```{python}
+import math
+
+def zcdp_to_epsilon(rho, delta=1e-5):
+    return rho + 2 * math.sqrt(rho * math.log(1 / delta))
+
+def budget(n_queries, sigma, delta=1e-5, sensitivity=1.0):
+    rho_q = (sensitivity / sigma) ** 2 / 2
+    rho_total = n_queries * rho_q
+    return rho_q, rho_total, zcdp_to_epsilon(rho_total, delta)
+```
+
+## The protocol
+
+The setup is the same as in [Cox with threshold
+keys](cox-threshold.qmd), except that each of the $N$ sites adds
+$\mathcal{N}(0, \sigma^2/N)$ to its local negative log-likelihood
+before encrypting it. Since variances of independent normals add, the
+decrypted total is $\ell(\beta) + \mathcal{N}(0, \sigma^2)$.
 
 ```{python}
 import numpy as np
@@ -52,204 +81,135 @@ def make_noisy_local(sigma, n_sites, rng):
     return noisy_local
 ```
 
-## The accounting
-
-Composition is zero-concentrated DP [@BunSteinke2016]: a Gaussian release is
-$\rho = (\Delta/\sigma)^2/2$-zCDP, $T$ queries compose to $T\rho$, and
-$\varepsilon = \rho + 2\sqrt{\rho\log(1/\delta)}$.
-
-```{python}
-import math
-
-def zcdp_to_epsilon(rho, delta=1e-5):
-    return rho + 2 * math.sqrt(rho * math.log(1 / delta))
-
-def budget(n_queries, sigma, delta=1e-5, sensitivity=1.0):
-    rho_q = (sensitivity / sigma) ** 2 / 2
-    rho_total = n_queries * rho_q
-    return rho_total, zcdp_to_epsilon(rho_total, delta)
-
-import pandas as pd
-
-pd.DataFrame(
-    [(n, 1e-2) + budget(n, 1e-2) for n in (150, 4000)],
-    columns=["queries", "sigma", "rho total", "epsilon at delta=1e-5"],
-)
-```
-
-The query count is not a free parameter: it is however many objective
-evaluations the optimizer happens to need, so the choice of optimizer
-sets the privacy bill.
-
-Sensitivity $\Delta = 1$ is a placeholder throughout. Deriving a
-defensible sensitivity bound for a Cox partial likelihood is a
-separate problem and not attempted here.
-
-## Why gradient-based optimizers break first
-
-A finite-difference gradient divides a difference of noisy function
-values by the step $h$, so function-value noise $\sigma$ becomes
-gradient noise of roughly $\sigma\sqrt{2}/(2h)$:
-
-```{python}
-def amplification_factor(h):
-    return math.sqrt(2) / (2 * h)
-
-pd.DataFrame({
-    "finite-difference step": ["1e-3", "1.49e-8 (SciPy's default)"],
-    "amplification": [f"{amplification_factor(1e-3):.0f}x",
-                      f"{amplification_factor(1.49e-8):.1e}x"],
-})
-```
-
-Near the optimum the true gradient is small, and that noise dominates.
-
-## Measured
-
-Fitting the stratified Cox model on the DLBCL cohort at a range of
-$\sigma$, with a gradient-based and a gradient-free optimizer. Each
-row is a full fit through the encrypted channel; the whole sweep takes
-several minutes, so it is recorded by
-`docs/_recorded/record_dp_sweep.py` rather than run at render time.
-
-Reading the table needs one caution. A *collapsed* fit — one that
-returns its all-zero starting point — has an error of exactly
-$\max_j |\beta_j^{\text{centralized}}|$, because that is the distance
-from the origin to the true fit. So the collapsed rows all report the
-same error, and that number says nothing about how much noise was
-added; it is a ceiling, not a measurement. The collapse is what
-matters, which is why those cells report the size of the coefficients
-the optimizer actually returned.
-
-```{python}
-#| echo: false
-import json
-from pathlib import Path
-from IPython.display import Markdown
-
-rec = json.loads(Path("_recorded/dp_sweep.json").read_text())
-rows = {(r["sigma"], r["method"]): r for r in rec["rows"]}
-sigmas = sorted({r["sigma"] for r in rec["rows"]})
-
-def cell(r):
-    if r is None:
-        return "—"
-    if r["collapsed"]:
-        return f"**collapsed** (max\\|β\\| = {r['max_abs_beta']:.0e})"
-    return f"{r['max_abs_diff']:.3f}, {r['sign_agreement']}/5 signs"
-
-body = "\n".join(
-    f"| {s:g} | {cell(rows.get((s, 'BFGS')))} "
-    f"| {cell(rows.get((s, 'Nelder-Mead')))} |"
-    for s in sigmas
-)
-scale = rec["rows"][0]["reference_scale"]
-Markdown(
-    "| σ | BFGS (finite-difference gradient) | Nelder–Mead (gradient-free) |\n"
-    "|---|---|---|\n" + body +
-    f"\n\n*Recorded run: {rec['wall_clock_minutes']:.0f} min. "
-    f"Error is the max absolute difference from the centralized "
-    f"cleartext fit. A fit is reported as collapsed when its largest "
-    f"coefficient is under {rec['collapse_fraction']:.0%} of the "
-    f"centralized scale ({scale:.3f}) — it never left the origin.*"
-)
-```
-
-The largest σ at which each optimizer still produces a fit, and what
-that fit costs in queries:
-
-```{python}
-#| echo: false
-survived = {}
-for r in rec["rows"]:
-    if not r["collapsed"]:
-        survived[r["method"]] = max(survived.get(r["method"], 0.0), r["sigma"])
-
-q0 = {r["method"]: r["n_queries"] for r in rec["rows"] if r["sigma"] == 0.0}
-smallest_nonzero = min(r["sigma"] for r in rec["rows"] if r["sigma"] > 0)
-nm_collapse = min(
-    r["sigma"] for r in rec["rows"]
-    if r["method"] == "Nelder-Mead" and r["collapsed"]
-)
-Markdown(
-    "| optimizer | largest σ still fitting | first σ that collapses "
-    "| evaluations at σ=0 |\n|---|---|---|---|\n"
-    + "\n".join(
-        f"| {m} | {survived[m]:g} "
-        f"| {min((r['sigma'] for r in rec['rows'] if r['method'] == m and r['collapsed']), default=float('nan')):g} "
-        f"| {q0[m]} |"
-        for m in q0
-    )
-)
-```
-
-The sweep brackets rather than pins these thresholds, so read them as
-bounds. BFGS collapses already at the smallest non-zero σ tested,
-`{python} f"{smallest_nonzero:g}"`, so its threshold lies somewhere
-below that. Nelder–Mead still fits at
-`{python} f"{survived['Nelder-Mead']:g}"` and collapses by
-`{python} f"{nm_collapse:g}"`, putting its threshold in between. The
-gap is therefore **more than one order of magnitude**; pinning it
-closer would need a finer grid than this sweep runs.
-
-That robustness is bought with queries:
-`{python} f"{q0['Nelder-Mead'] / q0['BFGS']:.0f}"`× as many objective
-evaluations at σ = 0, rising to the 4000-evaluation cap once noise
-sets in. Every evaluation is a query against the privacy budget, so
-tolerating more noise per query costs more queries — which is the
-trade the whole page is about.
-
-Both optimizers collapse eventually. Gradient-free search is more
-robust here, not immune.
-
-## Why widening the step does not rescue it
-
-The obvious remedy is a larger finite-difference step, since that
-shrinks the $1/h$ amplification. It does produce a good gradient —
-correct magnitudes and signs at $h = 10^{-3}$ — and the optimizer
-*still* returns its starting point.
-
-The cause is the line search. SciPy's BFGS uses a Wolfe search whose
-curvature condition evaluates the **gradient** at each trial point, so
-the amplification hits the line search itself rather than only the
-search direction. No step size rescues that; the search cannot accept
-a step it cannot verify.
-
-Gradient-free search has no such condition to satisfy, which is why it
-survives noise orders of magnitude larger. The general lesson: any
-optimizer that infers derivatives by differencing nearby function
-values will meet this failure mode against any DP mechanism adding
-enough noise to be meaningful.
-
-The encryption is not involved: the protocol releases
-$\ell(\beta) + \mathcal{N}(0, \sigma^2)$ at every query, as intended.
-
-## The same mechanism on consensus ADMM
-
-Everything above concerns an optimizer handed a noisy objective. The
-same mechanism applied to consensus ADMM is on its own page,
-[consensus ADMM under DP](consensus-admm-dp.qmd). There the protocol
-runs a fixed number of iterations, and choosing $\rho$ and that number
-becomes part of the privacy accounting.
-
-## Reproducing
+Each fit is a full optimizer run through the encrypted channel, and
+the whole sweep takes several minutes, so the fits are recorded once:
 
 ```bash
 OMP_NUM_THREADS=2 uv run python docs/_recorded/record_dp_sweep.py
 ```
 
-A single fit at one $\sigma$, if you only want to see the mechanism
-run:
-
 ```{python}
+#| echo: false
+import json
+from pathlib import Path
+
+import pandas as pd
+from IPython.display import Markdown
+
 from homomorphepy.examples import dp
 
-fit = dp.fit_at_sigma(1e-3, method="Nelder-Mead", seed=1)
-fit.sigma, round(fit.max_abs_diff, 4), fit.sign_agreement, fit.n_queries
+rec = json.loads(Path("_recorded/dp_sweep.json").read_text())
+rows = pd.DataFrame(rec["rows"])
+covariates = list(rec["rows"][0]["coefficients"])
+
+def pow10(s):
+    return "$1$" if s == 1 else f"$10^{{{round(math.log10(s))}}}$"
+
+def sci(x, digits=4):
+    if x == 0:
+        return "$0$"
+    e = math.floor(math.log10(abs(x)))
+    if -2 <= e < 4:
+        return f"${x:.{digits}g}$"
+    return f"${x / 10**e:.{digits}g} \\times 10^{{{e}}}$"
+
+def md_table(header, body, caption):
+    lines = ["| " + " | ".join(header) + " |",
+             "|" + "|".join("---:" for _ in header) + "|"]
+    lines += ["| " + " | ".join(r) + " |" for r in body]
+    return Markdown("\n".join(lines) + f"\n\n: {caption}")
+
+def sweep_table(method):
+    fits = rows[(rows["method"] == method) & (rows["sigma"] > 0)]
+    header = ["$\\sigma$", "Evaluations", *covariates,
+              "$\\max_j \\lvert \\hat\\beta_j - \\hat\\beta_j^{\\text{centralized}} \\rvert$"]
+    body = [[pow10(r.sigma), str(r.n_queries),
+             *(f"{r.coefficients[c]:.6f}" for c in covariates),
+             f"{r.max_abs_diff:.6f}"]
+            for r in fits.itertuples()]
+    label = "Nelder–Mead" if method == "Nelder-Mead" else method
+    return md_table(header, body,
+                    f"{label} over the threshold-DP nLL at {len(body)} values of $\\sigma$")
 ```
 
-Two DP runs never agree on values, by construction — the mechanism is
-randomized, so a specific coefficient is not a reproducible quantity.
-What is stable is the behavior: $\sigma = 0$ reproduces the lossless
-fit, error grows with $\sigma$, and gradient-based search collapses
-before gradient-free search does.
+## Mechanical correctness: $\sigma = 0$ reproduces the threshold fit
+
+When the noise is zero the protocol reduces to the lossless threshold
+protocol.
+
+```{python}
+#| echo: false
+clean = rows[(rows["method"] == "BFGS") & (rows["sigma"] == 0)].iloc[0]
+clean_diff = [abs(clean.coefficients[c] - clean.centralized[c]) for c in covariates]
+md_table(
+    ["Coefficient", "$\\hat\\beta$, centralized",
+     "$\\hat\\beta$, protocol at $\\sigma = 0$", "$\\lvert \\text{difference} \\rvert$"],
+    [[c, f"{clean.centralized[c]:.7f}", f"{clean.coefficients[c]:.7f}", sci(d)]
+     for c, d in zip(covariates, clean_diff)],
+    "Threshold-DP protocol at $\\sigma = 0$ (BFGS) vs the centralized cleartext fit",
+)
+```
+
+The maximum absolute coefficient difference at $\sigma = 0$ is
+`{python} Markdown(sci(max(clean_diff), 3))`. So any deviation from the
+centralized fit below comes from the noise.
+
+## Increasing noise: where does it break?
+
+We sweep $\sigma$ across five orders of magnitude. Each fit is one
+full BFGS run over the threshold-DP encrypted nLL. BFGS estimates the
+gradient by finite differences of these nLL values.
+
+```{python}
+#| echo: false
+sweep_table("BFGS")
+```
+
+Unlike R's `optim()`, SciPy's BFGS does not move from the zero
+starting point at any $\sigma > 0$, so this table is not comparable
+with the R results.
+
+## Nelder–Mead at the same noise scales
+
+The same sweep with Nelder–Mead. The starting simplex adds
+`{python} f"{dp.NM_SIMPLEX_STEP:g}"` to one coordinate per vertex. The
+search stops when the spread of objective values over the simplex is at
+most `{python} Markdown(sci(dp.NM_RELTOL))` relative to the starting value, or
+after `{python} dp.NM_MAXFEV` evaluations.
+
+```{python}
+#| echo: false
+sweep_table("Nelder-Mead")
+```
+
+CONCLUSION
+
+## Privacy budget
+
+For the fits at the first three values of $\sigma$, with sensitivity
+$\Delta = 1$ (placeholder) and target $\delta = 10^{-5}$, zCDP
+composition gives:
+
+```{python}
+#| echo: false
+first_three = sorted(s for s in rows["sigma"].unique() if s > 0)[:3]
+body = []
+for method in ("BFGS", "Nelder-Mead"):
+    for r in rows[(rows["method"] == method) & rows["sigma"].isin(first_three)].itertuples():
+        rho_q, rho_total, eps = budget(r.n_queries, r.sigma)
+        body.append(["Nelder–Mead" if method == "Nelder-Mead" else method,
+                     pow10(r.sigma), str(r.n_queries), sci(rho_q), sci(rho_total), sci(eps)])
+md_table(
+    ["Optimizer", "$\\sigma$", "Queries $k$", "$\\rho$ per query",
+     "$\\rho_{\\text{total}} = k\\rho$", "$\\varepsilon$ at $\\delta = 10^{-5}$"],
+    body,
+    "zCDP composition; sensitivity $\\Delta = 1$, target $\\delta = 10^{-5}$",
+)
+```
+
+The $\varepsilon$ column shows that at noise levels where the fits are
+still close, $\varepsilon$ is large. Whether that is acceptable depends
+on the application.
+
+One could also explore a tighter sensitivity bound $\Delta$ or allow
+far fewer queries, etc. We don't do that here.

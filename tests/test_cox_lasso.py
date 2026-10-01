@@ -4,7 +4,7 @@ Real data, so unlike the simulated examples there is no draw to vary
 and the fixture *is* the data. Comparisons are therefore against R's
 shipped values.
 
-The expensive ADMM loop (~150 iterations x 3 conic solves at K=100) is
+The expensive ADMM loop (3 conic solves per iteration at K=100) is
 exercised in one test; the standardization and screening stages, which
 are where the encrypted channel does the most interesting work, run
 cheaply and are tested separately.
@@ -61,8 +61,8 @@ class TestEncryptedScreening:
         # encryption, top 100 kept. Near-ties at the K=100 boundary
         # were predicted to flip under a one-ulp perturbation. They do
         # not -- but only because the expression matrix ships as raw
-        # float64 rather than CSV, and because both sort traps are
-        # handled: lexsort key order, and a stable argsort.
+        # float64 rather than CSV, and because the ranking uses a
+        # stable argsort.
         assert set(screened.top_idx.tolist()) == set(golden.tolist())
         assert len(set(screened.top_idx.tolist())) == 100
 
@@ -85,13 +85,13 @@ class TestEncryptedScreening:
 class TestFullPipeline:
     """The ADMM loop. ~27 minutes, so opt-in: `pytest -m slow`.
 
-    Measured 2026-08-06 against R's shipped results:
+    Measured 2026-09-30 (recorded run) against R's shipped results:
 
-        iterations                        python 147, R 147
-        max |python_admm - R z_enc|       1.556e-07
-        max |python_admm - R z_ref|       1.437e-07
-        max |python_central - R agg_beta| 1.991e-07
-        non-zero coefficients             python 38, R 38
+        iterations                        python 112, R 112
+        max |python_admm - R z_enc|       4.818e-07
+        max |python_admm - R z_ref|       3.536e-07
+        max |python_central - R agg_beta| 3.629e-07
+        non-zero coefficients             python 39, R 39
     """
 
     @pytest.fixture(scope="class")
@@ -108,22 +108,16 @@ class TestFullPipeline:
 
     def test_iteration_count_is_comparable_to_R(self, full):
         r_n_iter = int(load_golden()["n_iter_enc"])
-        # Deliberately NOT an equality, even though it MATCHED exactly
-        # (147 = 147) when measured. The stopping rule is an absolute
+        # Deliberately NOT an equality. The stopping rule is an absolute
         # residual threshold, so the count is where a continuous
         # quantity first crosses it, and a count whose residual lands
-        # near the threshold can flip under CKKS noise alone. This problem simply
-        # is not near a boundary -- consistent with R reproducing 147
-        # across an openfhe.R version change. Asserting equality would
-        # convert a happy fact into a brittle requirement.
+        # near the threshold can flip under CKKS noise alone.
         assert abs(full.n_iter - r_n_iter) < 20
 
     def test_coefficients_match_Rs_encrypted_fit(self, full):
         # Both are ADMM iterates stopped at the same residual
         # tolerance (5e-3) rather than exact optima, so agreement was
-        # expected only at convergence scale. Measured 1.6e-07 -- four
-        # orders tighter, because the trajectories track each other
-        # rather than merely landing in the same basin.
+        # expected only at convergence scale. Measured 4.8e-07.
         r_z_enc = np.asarray(load_golden()["z_enc"], dtype=float)
         assert np.max(np.abs(full.beta_admm - r_z_enc)) < 1e-5
 

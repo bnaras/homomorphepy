@@ -56,8 +56,10 @@ local again. Only the $z$-update needs cryptography.
 
 ## Adding noise
 
-Here we ask what happens if each site also adds noise, so that the
-released iterates satisfy **output differential privacy**. Adding the
+Here we ask what happens if each site also adds Gaussian noise of the
+kind an **output differential privacy** mechanism uses. The
+sensitivity $\Delta = 1$ below is a placeholder, so the $\varepsilon$
+values are not a privacy guarantee. Adding the
 noise takes one extra draw per site per iteration. With this
 optimizer, the fits are poor at any noise level that gives a small
 $\varepsilon$. The page runs the fits and reports the numbers.

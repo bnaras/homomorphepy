@@ -8,17 +8,17 @@ the pipeline needs the encrypted channel:
    is revealed.
 2. **Screening.** 6416 probes are ranked by a univariate Cox score at
    beta = 0, again pooled under encryption, and the top K = 100 kept.
-   Fitting all 6416 exhausts memory during canonicalization.
 3. **Consensus ADMM.** The lasso-penalized stratified Cox fit is
-   reached by ADMM, with only the consensus average traversing the
-   encrypted channel. The same loop runs twice, first with an
+   reached by ADMM, with the consensus average traversing the
+   encrypted channel at every iteration. The same loop runs twice, first with an
    unencrypted average and then with the encrypted one, so the
    difference between the two is the encryption's contribution.
 
 **The tie convention is Breslow here, not Efron.** The partial
-likelihood is built symbolically as ``log_sum_exp(eta[i:]) - eta[i]``
-over event times so cvxpy can canonicalize it; that expression *is*
-the Breslow form. Efron has no comparable convex-atom formulation.
+likelihood is built symbolically as ``log_sum_exp(eta[R_i]) - eta[i]``
+over event times, with ``R_i`` every row whose time is at least
+``t_i``, so cvxpy can canonicalize it; that expression *is* the
+Breslow form. Efron has no comparable convex-atom formulation.
 So this example and :mod:`.cox` deliberately use different
 conventions -- Efron there via PHReg, Breslow here by construction.
 
@@ -26,8 +26,8 @@ conventions -- Efron there via PHReg, Breslow here by construction.
 examples there is no draw to repeat: the DLBCL cohort is what it is,
 and every run reads the same bytes.
 
-Expensive: each ADMM run goes to ~150 iterations with three per-site
-conic solves each. ``run(recompute_admm=False)`` performs the standardization
+Expensive: each ADMM iteration makes three per-site conic solves, and
+each run takes over a hundred iterations. ``run(recompute_admm=False)`` performs the standardization
 and screening -- the parts that exercise the encrypted channel most
 interestingly -- and stops short of the loop.
 """
@@ -174,19 +174,18 @@ def _sites_raw():
 def _score_info_at_zero(X, time, status):
     """Univariate Cox score and information at beta = 0, per column.
 
-    ``np.lexsort((-status, time))`` orders by time, breaking ties so
-    events precede censorings -- note that lexsort takes its keys in
-    reverse priority order, one of the two sort traps that would
-    silently change which probes are kept.
+    The risk set at event ``i`` is every row with ``time >= t_i``,
+    tied rows included.
     """
-    order = np.lexsort((-status, time))
-    Xo, so = X[order], status[order]
+    order = np.argsort(time, kind="stable")
+    Xo, so, to = X[order], status[order], time[order]
+    first = np.searchsorted(to, to, side="left")
     n, p = Xo.shape
     U = np.zeros(p)
     info = np.zeros(p)
     for i in range(n):
         if so[i] == 1:
-            risk = Xo[i:]
+            risk = Xo[first[i]:]
             mu = risk.mean(axis=0)
             U += Xo[i] - mu
             info += ((risk - mu) ** 2).sum(axis=0) / risk.shape[0]
@@ -196,15 +195,19 @@ def _score_info_at_zero(X, time, status):
 def _breslow_nll(beta, X, time, status):
     """Cox partial NLL as a cvxpy expression (Breslow ties).
 
-    ``sum_j in events [ log_sum_exp(eta_{j:}) - eta_j ]`` over
-    event-time-ordered rows. This is exactly the Breslow partial
-    likelihood; Efron has no equivalent convex-atom form, which is why
-    this example and :mod:`.cox` use different tie conventions.
+    ``sum_j in events [ log_sum_exp(eta_{R_j}) - eta_j ]``, where the
+    risk set ``R_j`` is every row with ``time >= t_j``, tied rows
+    included. This is exactly the Breslow partial likelihood; Efron has
+    no equivalent convex-atom form, which is why this example and
+    :mod:`.cox` use different tie conventions.
     """
-    order = np.lexsort((-status, time))
-    Xo, so = X[order], status[order]
+    order = np.argsort(time, kind="stable")
+    Xo, so, to = X[order], status[order], time[order]
+    first = np.searchsorted(to, to, side="left")
     eta = Xo @ beta
-    terms = [cp.log_sum_exp(eta[i:]) - eta[i] for i in range(len(so)) if so[i] == 1]
+    terms = [
+        cp.log_sum_exp(eta[first[i]:]) - eta[i] for i in range(len(so)) if so[i] == 1
+    ]
     return cp.sum(terms) if len(terms) > 1 else terms[0]
 
 
@@ -366,9 +369,9 @@ def run(recompute_admm: bool = True) -> CoxLassoResult:
 
         # -- 3c. the same ADMM with the encrypted average -----------
         def encrypted_consensus(site_x, site_u):
-            # The only step that leaves a site, and the site encrypts
-            # it before it does. The per-site x_k + u_k never exists
-            # in the clear anywhere but at the site that formed it.
+            # Each site encrypts its own x_k + u_k; the aggregator
+            # receives only the encrypted terms, adds them, scales by
+            # 1/N, and decrypts the average.
             ct = sum(
                 h.encrypt(x + u)
                 for h, x, u in zip(key_holders, site_x, site_u, strict=True)

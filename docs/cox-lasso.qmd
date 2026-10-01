@@ -84,10 +84,9 @@ $$
 where $S_\tau(v)=\operatorname{sign}(v)\max(|v|-\tau,0)$ is
 soft-thresholding (the proximal map of $\tau\lVert\cdot\rVert_1$). The
 $x$-update is the per-site cvxpy solve; the $z$-update needs the
-cross-site average $\bar w=\tfrac1N\sum_k(x_k+u_k)$ — that average is
-the only quantity that traverses the encrypted channel; the
-soft-threshold is closed-form at the aggregator and adds no
-cryptographic depth.
+cross-site average $\bar w=\tfrac1N\sum_k(x_k+u_k)$, which traverses
+the encrypted channel at every iteration; the soft-threshold is
+closed-form at the aggregator and adds no cryptographic depth.
 
 ## The federated fit in the clear
 
@@ -132,9 +131,8 @@ q_ref = sum((s["X"] ** 2).sum(axis=0) for s in sites) / n_total
 sigma_ref = np.sqrt(np.maximum(q_ref - mu_ref**2, np.finfo(float).eps))
 ```
 
-Solving the full Cox-lasso at $p =$ `{python} p_raw` exhausts memory
-during cvxpy canonicalization, so we pre-screen to the $K = 100$
-probes with the strongest univariate association with survival — the
+Rather than fit all $p =$ `{python} p_raw` probes, we pre-screen to
+the $K = 100$ probes with the strongest univariate association with survival — the
 screen-then-fit pattern @BayleFanLou2025 use on this cohort. For probe
 $g$ on stratum $k$ in event-time order with risk set $R_i^{(k)}$ at
 event $i$,
@@ -158,12 +156,11 @@ top_ref[:10]
 
 Probes whose statistics are nearly tied at the $K$ boundary can swap
 under a one-ulp perturbation, and a different retained set means a
-different model. Three things keep the screen reproducible at that
+different model. Two things keep the screen reproducible at that
 boundary. The expression matrix is stored as raw float64 rather than
 text, which at 15 significant digits would drop bits that matter at
-the cutoff. The event-time ordering uses `np.lexsort((-status, time))`,
-whose key order is easy to reverse by accident. And the ranking uses
-`kind="stable"`, so ties break by index rather than arbitrarily.
+the cutoff. And the ranking uses `kind="stable"`, so ties break by
+index rather than arbitrarily.
 
 The centralized stratified Cox-lasso fit — our ground truth — is a
 single cvxpy solve summing the per-stratum Breslow partial likelihoods
@@ -193,14 +190,10 @@ print(inspect.getsource(cox_lasso.plain_consensus))
 ```
 
 We fix $\rho =$ `{python} f"{cox_lasso.RHO:g}"` and a cap of
-`{python} cox_lasso.MAX_ITER` iterations. The dual residual
-$\rho\lVert z^{t+1}-z^t\rVert$ is the binding term here and decays
-slowly; with this $\rho$ the absolute stopping rule
-`primal < TOL and dual < TOL` (with `TOL =`
-`{python} f"{cox_lasso.TOL:g}"`) is what ends the loop. Smaller $\rho$
-reaches the tolerance in fewer iterations but at a looser fit, so we
-keep $\rho =$ `{python} f"{cox_lasso.RHO:g}"` for the tightest
-agreement with the centralized solve.
+`{python} cox_lasso.MAX_ITER` iterations, and stop when the absolute
+rule `primal < TOL and dual < TOL` holds, with `TOL =`
+`{python} f"{cox_lasso.TOL:g}"`; the dual residual is
+$\rho\lVert z^{t+1}-z^t\rVert$.
 
 ```{python}
 #| echo: false
@@ -221,13 +214,18 @@ Markdown(
 
 ## The same fit under threshold keys
 
-Only three quantities ever cross a site boundary: the standardization
-moments $(S_k, Q_k)$, the screening statistics $(U^{(k)}, I^{(k)})$,
-and, at each ADMM iteration, the consensus sum $\sum_k (x_k + u_k)$.
-Each is a sum over sites, so each becomes one round of encrypted
+Four quantities cross a site boundary: the standardization moments
+$(S_k, Q_k)$, the screening statistics $(U^{(k)}, I^{(k)})$, and, at
+each ADMM iteration, the consensus sum $\sum_k (x_k + u_k)$ and the
+squared primal residuals $\lVert x_k - z\rVert^2$ of the stopping rule.
+`run_admm` forms the primal residual in the clear here; in a
+deployment it is one more sum of the same kind. Each of the first
+three is a sum over sites, so each becomes one round of encrypted
 summation: every site encrypts its contribution under the joint public
 key, the aggregator adds the encrypted contributions, and the total is
-recovered by $n$-of-$n$ partial decryption. The local cvxpy work and
+recovered by $n$-of-$n$ partial decryption. For the consensus, the
+encrypted total is first scaled by $1/N$, so what is decrypted is the
+average $\bar w$. The local cvxpy work and
 `run_admm` are untouched.
 
 `make_threshold_master()` walks the key-generation chain across the
@@ -306,9 +304,9 @@ aggregator.
 
 ```{python}
 def encrypted_consensus(site_x, site_u):
-    # Each site encrypts its own x_k + u_k; the per-site vector never
-    # exists in the clear outside the site. The aggregator adds the
-    # encrypted values, scales by 1/N, and decrypts only the average.
+    # Each site encrypts its own x_k + u_k; the aggregator receives
+    # only the encrypted terms, adds them, scales by 1/N, and decrypts
+    # the average.
     ct = sum(h.encrypt(x + u) for h, x, u in zip(key_holders, site_x, site_u, strict=True))
     return np.asarray(master.decrypt(ct * (1.0 / len(site_x)), length=K), dtype=float)
 ```
@@ -399,15 +397,14 @@ recorded.
 
 ## What the protocol hides and reveals
 
-The aggregator learns the pooled per-probe mean and SD (round 1), a
-per-probe stratified univariate Cox $|Z|$ statistic and the indices of
-the top-$K$ screened probes (round 2), and the consensus $z^t$ at every
-ADMM iteration. Each is an aggregated population-level statistic over
+The aggregator learns the pooled per-probe mean and SD (round 1), the
+pooled per-probe univariate Cox score $U_g$ and information $I_g$ and the indices of
+the top-$K$ screened probes (round 2), and the cross-site average
+$\bar w$ before soft-thresholding at every ADMM iteration. Each is an aggregated population-level statistic over
 `{python} n_total` patients, not patient-level data. None of the
 per-site design matrices $X_k$, the per-site $(\mu, \sigma^2)$
 contributions, the per-site $(U, I)$ contributions, or the per-site
-$(x_k + u_k)$ vectors ever appear in cleartext anywhere in the
-protocol. Decryption at every step is $n$-of-$n$ threshold: no single
+$(x_k + u_k)$ vectors reaches the aggregator in cleartext. Decryption at every step is $n$-of-$n$ threshold: no single
 party — the aggregator included — can recover any intermediate quantity
 unilaterally.
 
@@ -415,9 +412,8 @@ Two steps on this page would not exist in a real deployment. The
 unencrypted reference pass forms the per-site averages that the
 protocol keeps encrypted, and the centralized solve pools all the
 data. We can run both only because this page holds all three sites'
-data in one process. The choice $\rho =$ `{python} f"{cox_lasso.RHO:g}"`
-depends on them too: it was kept because it agreed best with the
-centralized solve, which a deployment cannot compute.
+data in one process. A deployment also has to choose $\rho$ without
+the centralized solve.
 
 A deployment can instead choose $\rho$ on a surrogate cohort built from
 public design facts, as [consensus ADMM under
@@ -452,9 +448,9 @@ against the budget.
 - **Honest-but-curious trust.** A site that misreports its local
   $(x_k + u_k)$ can corrupt the consensus; detecting this needs
   commitments or zero-knowledge proofs not implemented here.
-- **The aggregator sees the trajectory $\{z^t\}$.** Per-iteration
-  consensus values are revealed in the clear (after fusion) so the
-  loop can decide convergence.
+- **The aggregator sees $\bar w$ at every iteration.** It is
+  decrypted before soft-thresholding, so it includes the coordinates
+  that $z^t$ sets to zero.
 - **No output privacy.** The released $\hat\beta = z^\star$ is the same
   coefficient vector as the centralized fit; output-level protection is
   out of scope here and is demonstrated on the [consensus ADMM under
@@ -470,7 +466,7 @@ by one.
 ## Breslow ties here, Efron in the other Cox example
 
 The partial likelihood is built symbolically as
-`log_sum_exp(eta[i:]) - eta[i]` so a convex solver can canonicalize
-it. That expression *is* Breslow's form; Efron's has no comparable
+`log_sum_exp(eta[R_i]) - eta[i]`, with $R_i$ every row whose time is
+at least $t_i$, so a convex solver can canonicalize it. That expression *is* Breslow's form; Efron's has no comparable
 convex-atom formulation. The [Cox regression](cox.qmd) example, which
 calls a fitted likelihood rather than building one, uses Efron.

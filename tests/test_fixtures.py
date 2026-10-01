@@ -153,8 +153,8 @@ class TestGoldenOutputs:
         g = load_golden()
         assert g["params"]["K"] == 100
         assert len(g["top_idx"]) == 100
-        assert g["n_iter_enc"] == g["n_iter_ref"] == 147
-        assert len(g["trajectory"]) == 147
+        assert g["n_iter_enc"] == g["n_iter_ref"]
+        assert len(g["trajectory"]) == g["n_iter_enc"]
         assert len(g["trajectory"][0]) == 100
 
     def test_shipped_encrypted_fit_is_within_its_ckks_tolerance(self):

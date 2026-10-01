@@ -209,8 +209,7 @@ Markdown(f"""
 """)
 ```
 
-The CKKS-based estimate matches the cleartext estimate to within
-floating-point precision — here
+The CKKS-based estimate differs from the cleartext estimate by
 `{python} f"{fit.abs_difference:.1e}"`. No site ever revealed its
 individual counts to any other party.
 
