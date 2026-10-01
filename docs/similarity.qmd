@@ -301,8 +301,9 @@ $$\lVert Z_{\text{site}} A - Z_{\text{public}}\rVert^2
   \;+\; \mu \lVert A^\top A - I\rVert^2,$$
 
 where $\mu \to \infty$ forces orthogonality (the Procrustes solution
-used above), $\mu = 0$ is unconstrained least squares, and values in
-between give near-orthogonal maps.
+used above), $\mu = 0$ is unconstrained least squares, computed with
+a small ridge on the normal equations, and values in between give
+near-orthogonal maps.
 
 These sweeps run **in the clear**. The encrypted and unencrypted scores
 agree to $10^{-13}$, so running them through encryption would cost

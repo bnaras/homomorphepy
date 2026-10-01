@@ -365,7 +365,8 @@ def fit_adapter_mu(
     Minimizes ``||Z_site A - Z_public||^2 + mu * ||A^T A - I||^2``.
     At ``mu = inf`` the constraint binds and this is the orthogonal
     Procrustes solution of :func:`fit_adapter`; at ``mu = 0`` it is
-    unconstrained least squares; in between, near-orthogonal.
+    unconstrained least squares, computed with a small ridge on the
+    normal equations; in between, near-orthogonal.
     """
     p = anchor_site.shape[1]
     if np.isinf(mu):
