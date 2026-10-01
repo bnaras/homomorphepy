@@ -151,8 +151,8 @@
     {
       "file": "cvxr_consensus_golden.json",
       "kind": "golden",
-      "bytes": 131152,
-      "sha256": "c6d1e4e45ae15f7b493b1138d2568050bd39a1a6009e40031ed6d8489e3d8ea3",
+      "bytes": 131141,
+      "sha256": "8196a36875f04948847d90f3e82c31c783b8ea4cab92f7ef71511c78a0d9dd46",
       "n_iter_enc": 112,
       "K": 100
     }
