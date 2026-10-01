@@ -1,10 +1,7 @@
 """homomorphepy — multi-site privacy-preserving statistics over FHE.
 
 Multi-site privacy-preserving statistics over homomorphic encryption,
-built on openfhe-python.
-Both packages sit on the same OpenFHE C++ library, and their worked
-examples consume the same fixture bytes so results can be compared
-across languages rather than merely resembling one another.
+built on openfhe-python, the Python binding of the OpenFHE C++ library.
 
 Importing this package does NOT import the crypto backend; see
 `homomorphepy._backend` for why that is deliberate and how to install
