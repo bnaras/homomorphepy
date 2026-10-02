@@ -5,5 +5,8 @@ __pycache__/
 .ruff_cache/
 dist/
 build/
+# Locally built openfhe wheels from scripts/build-openfhe-wheel.sh;
+# kept apart from dist/ so `uv publish dist/*` cannot pick them up.
+wheels/
 docs/_site/
 docs/.quarto/

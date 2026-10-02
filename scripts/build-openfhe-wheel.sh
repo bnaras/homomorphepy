@@ -31,7 +31,10 @@
 # is the OpenFHE C++ install prefix it builds against (the directory
 # holding lib/OpenFHE). Build scratch goes under build/ in this repo.
 #
-# Output: dist/openfhe-<ver>-cp3XX-cp3XX-macosx_<arch>.whl
+# Output: wheels/openfhe-<ver>-cp3XX-cp3XX-macosx_<arch>.whl
+#
+# The wheel goes to wheels/, not dist/, so that `uv build` output in
+# dist/ can be published with a plain glob without sweeping it up.
 
 set -euo pipefail
 
@@ -56,7 +59,7 @@ OPENFHE_PREFIX="$OPENFHE_HOME"
 SCRATCH="$HERE/build"
 BUILD="$SCRATCH/openfhe-python-build"
 STAGE="$SCRATCH/openfhe-wheel-stage"
-DIST="$HERE/dist"
+WHEELS="$HERE/wheels"
 
 for d in "$SRC" "$OPENFHE_PREFIX/lib/OpenFHE"; do
     [[ -d "$d" ]] || { echo "ERROR: missing $d" >&2; exit 1; }
@@ -271,12 +274,12 @@ with open(Path(distinfo) / "RECORD", "w", newline="") as fh:
 PY
 )
 
-mkdir -p "$DIST"
-rm -f "$DIST/$WHEELNAME"
-( cd "$STAGE" && zip -qr "$DIST/$WHEELNAME" . )
+mkdir -p "$WHEELS"
+rm -f "$WHEELS/$WHEELNAME"
+( cd "$STAGE" && zip -qr "$WHEELS/$WHEELNAME" . )
 
-echo "  $DIST/$WHEELNAME"
-echo "  $(du -h "$DIST/$WHEELNAME" | cut -f1)"
+echo "  $WHEELS/$WHEELNAME"
+echo "  $(du -h "$WHEELS/$WHEELNAME" | cut -f1)"
 echo
 echo "== install with =="
-echo "  uv pip install --python .venv/bin/python '$DIST/$WHEELNAME'"
+echo "  uv pip install --python .venv/bin/python '$WHEELS/$WHEELNAME'"
