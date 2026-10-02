@@ -45,6 +45,10 @@ format:
     toc: true
     code-fold: false
     df-print: kable
+  # Every page is also rendered to an executed notebook, with outputs
+  # and the inline values substituted, linked from the page under
+  # "Other Formats".
+  ipynb: default
 
 # Documents execute at render time: every number in the prose comes
 # from code that ran, never from a value typed by hand. `freeze`

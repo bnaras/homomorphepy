@@ -28,7 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes no floating major tag; pin the full version.
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.12"
 
