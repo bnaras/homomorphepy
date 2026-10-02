@@ -131,6 +131,10 @@ switch to calling it once a release exposes it.
 
 ## Documentation
 
+The documentation is at <https://bnaras.github.io/homomorphepy>. Each
+page is also available there as an executed Jupyter notebook, linked
+from the page under "Other Formats".
+
 The site is built with Quarto and every page executes: each number in
 the prose comes from code that ran during the render, never from a
 value typed by hand.
