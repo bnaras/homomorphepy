@@ -1,5 +1,5 @@
 ---
-title: "Privacy-preserving count aggregation under BFV"
+title: "Privacy-Preserving Count Aggregation"
 ---
 
 ```{python}
@@ -17,20 +17,18 @@ Multiple research sites each hold patient data and want to know the
 per-site counts to anyone, including the aggregator running the
 aggregation.
 
-We use OpenFHE's **BFV** scheme. BFV operates on *integer vectors*
-with both addition and multiplication — well-suited to counting and
-other exact integer-valued aggregates.
+Here we use OpenFHE's **BFV** scheme via the `openfhe-python`
+binding. BFV operates on *integer vectors* with both addition and
+multiplication — well-suited to counting and other exact
+integer-valued aggregates.
 
-This is the BFV companion to the CKKS-based real-valued master/worker
-examples ([maximum likelihood](mle.qmd), [Cox regression](cox.qmd)).
-For exact integer aggregation BFV is the right choice; for real-valued
-sufficient statistics CKKS is the right choice.
+This is the BFV companion to the CKKS-based real-valued
+master/worker pages ([maximum likelihood](mle.qmd), [Cox
+regression](cox.qmd)). For exact integer aggregation BFV is the
+right choice; for real-valued sufficient statistics CKKS is the
+right choice.
 
-This page calls the encryption primitives directly rather than going
-through the actor layer used elsewhere, because the primitives are
-what it is teaching.
-
-## Three sites with private cohorts
+## Setup
 
 ```{python}
 import numpy as np
@@ -45,8 +43,6 @@ site_data = [
     })
     for n in (1000, 500, 1500)
 ]
-
-site_data[0].head()
 ```
 
 ## The aggregator sets up encryption
@@ -63,10 +59,10 @@ pk, sk = keys.publicKey, keys.secretKey
 codec = packed_codec(cc)
 ```
 
-In a real deployment the aggregator distributes the public key (and
-the serialized context) to each site. The secret key stays with the
-aggregator. We simulate this in one process by sharing `cc` and `pk`
-locally; serializing them for a real deployment is shown below.
+In a real deployment the aggregator distributes the public key
+(and the serialized context) to each site. The secret key stays
+with the aggregator. We simulate this in one Python session by
+sharing `cc` and `pk` locally.
 
 ## Each site computes locally and encrypts
 
@@ -83,8 +79,6 @@ def site_encrypt(site_df, cc, pk):
 ct_site1 = site_encrypt(site_data[0], cc, pk)
 ct_site2 = site_encrypt(site_data[1], cc, pk)
 ct_site3 = site_encrypt(site_data[2], cc, pk)
-
-ct_site1
 ```
 
 These encrypted counts are opaque to the aggregator — it learns
@@ -93,7 +87,7 @@ nothing about any individual site's count.
 ## The aggregator aggregates
 
 ```{python}
-# Homomorphic addition: the aggregator never decrypts intermediates.
+# Homomorphic addition: the aggregator never decrypts intermediate values.
 ct_total = ct_site1 + ct_site2 + ct_site3
 
 # Only the aggregator holds the secret key.
@@ -113,13 +107,10 @@ true_count
 assert total_count == true_count
 ```
 
-The aggregated count matches the cleartext computation exactly — BFV
-is *exact* over its integer plaintext space. The per-site counts, which
-the aggregator never sees, were:
-
-```{python}
-[len(df.query(QUERY)) for df in site_data]
-```
+The aggregated count matches the cleartext computation exactly.
+BFV is an *exact* scheme over the integers: unlike the real-valued
+arithmetic used elsewhere in this package, it introduces no
+approximation error at all.
 
 ## The details of what happened
 
@@ -138,7 +129,7 @@ patient-level data. The total is exact.
 ## Serializing for a real distributed protocol
 
 In a real deployment each site needs the aggregator's context and
-public key. OpenFHE provides serialization:
+public key. `openfhe-python` provides serialization:
 
 ```{python}
 import tempfile
@@ -169,14 +160,3 @@ from homomorphepy.examples import aggregation
 result = aggregation.run()
 result.total_encrypted, result.total_cleartext, result.exact
 ```
-
-## The limit of this trust model
-
-The aggregator holds the secret key. If a site's encrypted count were
-ever sent on its own, the aggregator *could* decrypt it — the protocol
-relies on the aggregator only ever seeing the sum.
-
-[Distributed query counting](query-count.qmd) removes that reliance.
-There the key is generated n-of-n, split across the sites, so the
-aggregator cannot decrypt anything alone. Same computation, and the
-guarantee stops depending on what the aggregator chooses to look at.

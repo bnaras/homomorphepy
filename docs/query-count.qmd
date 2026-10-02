@@ -1,5 +1,5 @@
 ---
-title: "Distributed query count under threshold BFV"
+title: "Distributed Query Count with Threshold Keys"
 ---
 
 ```{python}
@@ -37,16 +37,14 @@ for n in SITE_SIZES:
         "bm":  rng.normal(size=n),
     }))
     start += n
-
-site_data[0].head()
 ```
 
 The query we will run is `age < 50 and sex == "F" and bm < 0.2`.
 
 ## The target answer
 
-If the data could be pooled in one place, the query is a single
-expression. We compute it here only to have a reference to check the
+If the data could be pooled in one place, the query is a single line
+of Python. We compute it here only to have a reference to check the
 distributed protocol against.
 
 ```{python}
@@ -107,9 +105,10 @@ point, so BFV is the right instrument.
 
 ## The threshold-BFV implementation
 
-The crypto context is BFV. The plaintext modulus only has to exceed
-the largest total the query could return, so 65537 is comfortable for
-counts.
+The encryption context is BFV; `make_threshold_master()` enables the
+`MULTIPARTY` feature on it. BFV works with integers modulo a fixed
+bound, and that bound only has to exceed the largest total the query
+could return, so 65537 is comfortable for counts.
 
 ```{python}
 from homomorphepy import fhe_context
@@ -117,11 +116,10 @@ from homomorphepy import fhe_context
 cc = fhe_context("BFV", plaintext_modulus=65537, multiplicative_depth=1)
 ```
 
-Each site holds its own private table and a local function. The local
-function receives the broadcast query and evaluates it against that
-site's rows — this is the only place patient records are ever touched.
-The count it returns never leaves in the clear: the site encrypts it
-with the public parameters it was given at setup.
+Each site is a worker whose local function evaluates the query against
+its own private data and returns a count. The master broadcasts the
+query; no site sees another site's data, and the counts it returns are
+encrypted before they leave.
 
 ```{python}
 from homomorphepy.actors import make_worker
@@ -133,30 +131,24 @@ sites = [make_worker(f"Site {i + 1}", rows, local_count)
          for i, rows in enumerate(site_data)]
 ```
 
-`make_threshold_master()` runs the chained key generation across the
-three sites: each ends up holding its own secret share, and the master
-gets only the joint public key. The same master class drives CKKS or
-BFV — it reads the scheme back from the context — so the only thing
-that changed from the real-valued examples is the context above.
+The sites have to exist before the aggregator does, because the joint
+public key is built *from* them: `make_threshold_master()` walks the
+chain, each site generating and keeping its own share and passing on
+only a public key. What comes back is an aggregator holding the joint
+public key and nothing secret, already wired to the sites. The same
+master class drives CKKS or BFV — it reads the scheme back from the
+context — so the only thing that changed from the real-valued pages is
+the context above.
 
 ```{python}
 from homomorphepy.actors import make_threshold_master
 
 master = make_threshold_master("Aggregator", cc, sites)
-master
 ```
 
-The master holds no secret material of its own, which we can check
-directly:
-
-```{python}
-len(master.sites), hasattr(master, "secret_share")
-```
-
-One call runs the protocol: the query is broadcast, each site's count
-is encrypted under the joint public key, the aggregator sums the
-encrypted counts, and the total is jointly decrypted by the
-three share holders.
+One call runs the protocol: each worker's encrypted count is summed
+homomorphically, and the total is jointly decrypted by the three
+secret-share holders.
 
 ```{python}
 encrypted_count = master.aggregate(QUERY)
@@ -182,21 +174,7 @@ bit-for-bit, not approximate.
 assert int(encrypted_count) == cleartext_count
 ```
 
-The per-site counts, which no party ever decrypts, would have been:
-
-```{python}
-[local_count(rows, QUERY) for rows in site_data]
-```
-
-The cohort is simulated afresh on each run. What the example claims is
-that the encrypted protocol reproduces the pooled answer *on whatever
-data it was given* — a stronger statement than reproducing one
-particular dataset.
-
 ## The same run, in one call
-
-Everything above is packaged as a function, so the protocol can be
-re-run without retyping it:
 
 ```{python}
 from homomorphepy.examples import query_count

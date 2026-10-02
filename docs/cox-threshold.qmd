@@ -1,6 +1,5 @@
 ---
-title: "Cox regression with threshold keys"
-subtitle: "The same fit, with no party able to decrypt alone"
+title: "Distributed Cox Regression with Threshold Key Generation"
 ---
 
 ```{python}
@@ -10,51 +9,52 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-## Why a second version
+## Introduction
 
-The [distributed Cox](cox.qmd) example runs the whole fit through
-encryption and reaches the aggregated answer. But it leaves one
-assumption standing: the master owns the secret key. It sees only the
-sum of the site contributions because the protocol never sends it
-anything else — not because it *could not* decrypt an individual
-contribution if it received one.
+The [Cox page](cox.qmd) fits a stratified Cox model across three sites
+under CKKS. There the master holds the secret key and decrypts the
+encrypted sum at every iteration of the optimizer, so the master must
+be trusted not to decrypt anything else, such as a single site's
+contribution.
 
-Threshold key generation removes the assumption. The sites jointly
-generate a key so that no single party holds the joint secret, and the
-master becomes an **aggregator**: it adds encrypted values and
-coordinates the decryption. It cannot decrypt alone.
+On this page the three sites generate the CKKS key pair jointly, and
+each keeps its own share of the secret key. No single party holds the
+whole key. The master becomes an aggregator: it adds the encrypted
+contributions and collects the sites' partial decryptions, but it
+cannot decrypt anything by itself.
 
-The statistics do not change at all. Same cohort, same partial
-likelihood, same optimizer, same coefficients. Only who can read what.
+The data and the model are the same as on the [Cox page](cox.qmd).
+Only who can decrypt changes.
 
 ## Threat model
 
-Three parties, three assumptions.
+Three sites and one untrusted aggregator:
 
-**The sites** are honest-but-curious. They follow the protocol and
-report their true local log-likelihood, but they would read anything
-they were shown. Each holds one secret-key share and its own patients'
-records.
+- **Sites $1, 2, 3$** each hold private patient data and a secret key
+  share $\mathit{sk}_i$. They are honest-but-curious among themselves
+  and toward the aggregator.
+- **Aggregator** holds no secret-key material. It receives the
+  encrypted contributions, adds them, and sends the sum back to the
+  sites for partial decryption. The encrypted values it handles tell
+  it nothing on their own.
 
-**The aggregator** holds no secret-key material. It receives the
-encrypted contributions, adds them, and sends the sum back to the
-sites for partial decryption. The encrypted values it handles tell it
-nothing on their own. Decrypting anything, an individual contribution
-included, takes a partial decryption from every site.
+What the aggregator sees, by stage:
 
-**The channel** is assumed authenticated but readable. Everything that
-crosses it is encrypted under the joint public key.
+1. Encrypted local contributions
+   $\mathit{ct}_i = E_{\mathit{pk}_{1..n}}(\ell_i)$. None decryptable alone.
+2. The encrypted sum $\mathit{ct}_{\text{sum}} = \boxplus_i \mathit{ct}_i$.
+   Not decryptable alone.
+3. Partial decryptions $\rho_i$ contributed by each site. Not
+   decryptable individually.
+4. After combining the partial decryptions, the sum
+   $\ell(\beta) = \sum_i \ell_i$ in the clear.
 
-What is *not* covered: a site that lies about its local value corrupts
-the fit undetectably. Detecting that needs verifiable computation,
-which this does not attempt. And $n$-of-$n$ means every site must be
-present at decryption time; there is no quorum to fall back on.
+Step 4 reveals $\ell(\beta)$ to the aggregator, which is what the
+master saw on the [Cox page](cox.qmd). The difference is that no
+single party can decrypt an individual contribution or any
+intermediate value. That takes a partial decryption from every site.
 
-## The cohort
-
-The same DLBCL cohort, sites, and covariates as the
-[distributed Cox](cox.qmd) page — the point here is that nothing about
-the statistical setup moves.
+## The Cox setup (same DLBCL data as the Cox page)
 
 ```{python}
 import numpy as np
@@ -72,11 +72,38 @@ def site_frame(name):
                                    for c in COVARIATES]),
     }
 
-sites = {name: site_frame(name) for name in site_order()}
-
-df.groupby("Subgroup", observed=True).agg(n=("time", "size"),
-                                          events=("status", "sum"))
+cox_data = {name: site_frame(name) for name in site_order()}
 ```
+
+## The protocol
+
+**Setup** (once):
+
+1. Site 1 calls `KeyGen()` to produce its keypair
+   $(\mathit{pk}_1, \mathit{sk}_1)$.
+2. Site 2 calls `MultipartyKeyGen(pk_1)` to produce
+   $(\mathit{pk}_{12}, \mathit{sk}_2)$.
+3. Site 3 calls `MultipartyKeyGen(pk_12)` to produce
+   $(\mathit{pk}_{123}, \mathit{sk}_3)$.
+4. The final $\mathit{pk}_{123}$ is the **joint public key**. Each
+   site keeps its own $\mathit{sk}_i$.
+
+**Per query** (called inside the optimizer):
+
+1. Each site $i$ computes its local Cox negative log-likelihood
+   $\ell_i(\beta)$ and encrypts it under the joint public key.
+2. The aggregator sums the encrypted contributions homomorphically.
+3. Each site partial-decrypts the sum using its own $\mathit{sk}_i$.
+4. The aggregator fuses the partials to recover $\ell(\beta)$.
+
+`make_threshold_master()` runs this chain across the sites in one
+call and returns a `ThresholdMaster` holding the joint public key.
+Each site keeps the share it generated. To decrypt, the master asks
+every site for a partial decryption and combines them. This happens
+inside the `decrypt()` method, so the `aggregate()` runner from the
+Cox page works unchanged.
+
+## Implementation
 
 ```{python}
 from statsmodels.duration.hazard_regression import PHReg
@@ -88,92 +115,56 @@ def local_cox_nll(data, beta):
     return float(-model.loglike(b))
 ```
 
-## The protocol
-
-One evaluation of the objective is a five-stage round.
-
-1. The aggregator broadcasts the current $\beta$ in the clear. It is a
-   parameter guess, not data.
-2. Each site $i$ computes $\ell_i(\beta)$ on its own records and
-   encrypts it under the **joint** public key:
-   $\mathit{ct}_i = E_{\mathit{pk}_{1..n}}(\ell_i)$.
-3. The aggregator adds them homomorphically,
-   $\mathit{ct}_{\text{sum}} = \boxplus_i \mathit{ct}_i$.
-4. Each site produces a **partial decryption** $\rho_i$ of
-   $\mathit{ct}_{\text{sum}}$ using its own share alone. One site leads
-   the ceremony; the others follow.
-5. The aggregator fuses the $\rho_i$ into the total $\ell(\beta)$ in
-   the clear, and returns it to the optimizer.
-
-Stages 1, 3 and 5 are the aggregator's whole job.
-
-## Threshold key generation
-
-The key is generated by a chained ceremony: each site extends the
-running joint public key with its own share, and the final joint public
-key is what everything is encrypted under. `make_threshold_master` runs
-that chain and hands each site its share.
+The CKKS context is the one from the Cox page. The chained
+`MultipartyKeyGen()` calls need the `MULTIPARTY` feature, which
+`make_threshold_master()` enables on the context it is given:
 
 ```{python}
 from homomorphepy import fhe_context, make_worker, make_threshold_master
 
 cc = fhe_context("CKKS", multiplicative_depth=1, scaling_mod_size=59,
                  first_mod_size=60, batch_size=8)
-
-workers = [make_worker(name, data, local_cox_nll)
-           for name, data in sites.items()]
-
-aggregator = make_threshold_master("Aggregator", cc, workers)
-aggregator
 ```
 
-The workers are built exactly as on the single-key page. What makes a
-site a threshold party is having run a key-generation round, not being
-of a different type — so the same `make_worker()` call serves both,
-and only the wiring differs. Here the sites come first, because the
-joint key cannot exist before they do.
-
-The share each site generated stayed there. We can check that rather
-than assert it:
+The sites come first, because the joint public key is built from
+them. `make_threshold_master()` then takes the sites and returns the
+master.
 
 ```{python}
-[(w.name, w.has_share) for w in workers], hasattr(aggregator, "secret_share")
+workers = [make_worker(name, data, local_cox_nll)
+           for name, data in cox_data.items()]
+
+master = make_threshold_master("Aggregator", cc, workers)
 ```
 
-The scaling parameters are lifted from the defaults for the same reason
-as in the single-key version: CKKS precision is relative to the
-magnitude of the value being encrypted, and the summed stratified
-log-likelihood on this cohort is large.
+The check below confirms that the master has no attribute holding key
+shares and that the GCB site holds its own share:
 
-## Running the fit
+```{python}
+share_check = dict(master_holds_shares = hasattr(master, "_share"),
+                   gcb_holds_own_share = workers[0].has_share)
+share_check
+```
 
-Identical to the single-key page, line for line. The optimizer is
-handed a callable; what happens inside it is the protocol above.
+## Iterative MLE through the threshold protocol
+
+The optimizer code is the same as on the Cox page. Only the master
+class differs.
 
 ```{python}
 from scipy.optimize import minimize
 
-n_calls = 0
-
 def encrypted_nll(beta):
-    global n_calls
-    n_calls += 1
-    value = aggregator.aggregate(np.asarray(beta, dtype=float))
+    value = master.aggregate(np.asarray(beta, dtype=float))
     return 1e12 if (value is None or np.isnan(value)) else float(value)
 
-opt = minimize(encrypted_nll, x0=np.zeros(len(COVARIATES)),
+fit = minimize(encrypted_nll, x0=np.zeros(len(COVARIATES)),
                method="L-BFGS-B", options={"ftol": 1e-9})
-
-beta_hat = np.asarray(opt.x)
-n_calls, opt.success
+beta_hat = np.asarray(fit.x)
 ```
 
-Each of those `{python} n_calls` calls carried a full encrypt,
-homomorphic sum, and $n$-of-$n$ threshold decryption across the three
-sites.
-
 Standard errors come from the Hessian of the encrypted objective at
-the fit, as on the single-key page:
+the fit, as on the Cox page:
 
 ```{python}
 import pandas as pd
@@ -183,25 +174,30 @@ se = np.sqrt(np.diag(np.linalg.inv(fd_hessian(encrypted_nll, beta_hat))))
 pd.DataFrame({"estimate": beta_hat, "std. error": se}, index=COVARIATES)
 ```
 
+```{python}
+float(-fit.fun)
+```
+
 ## Comparison with the cleartext fit
 
-The same objective, optimizer, start and tolerance, with the encrypted
-aggregation replaced by an ordinary sum:
+As on the Cox page, the check is the identical `minimize()` objective
+with the encrypted aggregation replaced by an ordinary sum of the
+three sites' cleartext values.
 
 ```{python}
 def cleartext_nll(beta):
-    return sum(local_cox_nll(d, beta) for d in sites.values())
+    return sum(local_cox_nll(d, beta) for d in cox_data.values())
 
-opt_plain = minimize(cleartext_nll, x0=np.zeros(len(COVARIATES)),
+fit_plain = minimize(cleartext_nll, x0=np.zeros(len(COVARIATES)),
                      method="L-BFGS-B", options={"ftol": 1e-9})
-beta_plain = np.asarray(opt_plain.x)
+beta_plain = np.asarray(fit_plain.x)
 ```
 
 ```{python}
 #| echo: false
 enc_diff = np.abs(beta_hat - beta_plain)
 pd.DataFrame({
-    "minimize(), encrypted": beta_hat,
+    "minimize(), threshold": beta_hat,
     "minimize(), cleartext": beta_plain,
     "absolute difference": [f"{d:.2e}" for d in enc_diff],
 }, index=pd.Index(COVARIATES, name="coefficient")).round(7)
@@ -214,81 +210,44 @@ The threshold fit agrees with the cleartext fit to within
 assert enc_diff.max() < 1e-4
 ```
 
-## Only the master class changes
-
-The optimizer, the objective, the site functions and the protocol
-runner are identical between the two backends. Swapping the backend
-swaps who can decrypt, and nothing else.
+## The same run, in one call
 
 ```{python}
 from homomorphepy.examples import cox
 
-threshold_fit = cox.run(backend="threshold")
-ckks_fit = cox.run(backend="ckks")
+result = cox.run(backend="threshold")
+result.loglik_encrypted, result.loglik_centralized, result.max_abs_difference
 ```
 
-```{python}
-#| echo: false
-from IPython.display import Markdown
+## Discussion
 
-backend_gap = max(
-    abs(threshold_fit.coefficients[c] - ckks_fit.coefficients[c])
-    for c in COVARIATES
-)
-Markdown(f"""
-| backend | max diff vs cleartext | can any single party decrypt? |
-|---|---|---|
-| single-decrypter CKKS | {ckks_fit.max_abs_difference:.1e} | yes, the master |
-| threshold ($n$-of-$n$) | {threshold_fit.max_abs_difference:.1e} | no |
-""")
-```
-
-The two fits differ from each other by
-`{python} f"{backend_gap:.1e}"`, which is the point: the trust model
-changed and the answer did not.
-
-## What the aggregator sees, by stage
-
-1. Encrypted local contributions
-   $\mathit{ct}_i = E_{\mathit{pk}_{1..n}}(\ell_i)$. None decryptable
-   alone.
-2. The encrypted sum
-   $\mathit{ct}_{\text{sum}} = \boxplus_i \mathit{ct}_i$. Not
-   decryptable alone.
-3. Partial decryptions $\rho_i$ contributed by each site. Not
-   decryptable individually.
-4. After combining the partial decryptions, the sum
-   $\ell(\beta) = \sum_i \ell_i$ in the clear.
-
-Step 4 reveals $\ell(\beta)$ to the aggregator, which is what the
-master saw on the [distributed Cox](cox.qmd) page. The difference is
-that no single party can decrypt an individual contribution or any
-intermediate value. That takes a partial decryption from every site.
+1. **No single party holds the decryption key.** Each site generated
+   its own share and kept it; the master holds only the joint public
+   key, and has no attribute in which a share could sit. Encrypted
+   intermediate values are undecryptable by any single party in the
+   system, the aggregator included.
+2. **The fit does not change.** The coefficients agree with the
+   cleartext fit of the same objective to CKKS precision.
+3. **Same optimizer, same callback shape, same code structure.**
+   Compared to the Cox page only the setup changed: the workers are
+   built first and handed to `make_threshold_master()` instead of
+   being wired to a `make_ckks_master()` afterwards, because the joint
+   key cannot exist before the sites do. The optimizer sees nothing
+   different.
 
 ## Limitations
 
-**$n$-of-$n$, not $t$-of-$n$.** Every site must participate in every
-decryption. A site that goes offline halts the fit. A $t$-of-$n$ scheme
-would tolerate that, at the cost of letting any $t$ sites collude to
-decrypt.
-
-**The total is still disclosed.** The aggregator learns $\ell(\beta)$
-at every point the optimizer visits. That is a functional of all the
-data, and with enough evaluations it constrains the data. Bounding what
-it discloses is the subject of the
-[differential privacy](dp.qmd) page.
-
-**Honest-but-curious only.** A site reporting a false $\ell_i$ shifts
-the fit and nothing in the protocol notices. A site could also submit
-a corrupted partial decryption to break the fit; detecting that needs
-additional protocol machinery (commitments, zero-knowledge proofs)
-that this example does not implement.
-
-**Output privacy is unchanged.** The released coefficients
-$\hat\beta$ are the same as the cleartext fit. Output-level attacks
-(membership inference, model inversion) remain in scope.
-
-**Key generation is a ceremony.** It happens once, but it happens
-out-of-band and every site must be present for it. In a real deployment
-that is a scheduling problem, not a cryptographic one, and it is
-usually the harder of the two.
+- **The aggregator sees $\ell(\beta)$ at every iteration.** That is
+  the function value `minimize()` asks for. The individual site
+  contributions stay hidden. Hiding $\ell(\beta)$ as well would
+  require running the optimizer on encrypted values, which is possible
+  but considerably more complex.
+- **Honest-but-curious is the trust model.** Sites are assumed to
+  follow the protocol. A malicious site could submit a corrupted
+  partial decryption to break the fit; detecting this requires
+  additional protocol machinery (commitments, zero-knowledge proofs)
+  that this page does not implement.
+- **Output privacy is unchanged.** The released coefficients
+  $\hat\beta$ are the same as the cleartext fit. Output-level attacks
+  (membership inference, model inversion) remain in scope and motivate
+  the differential-privacy demonstrations elsewhere in the package.

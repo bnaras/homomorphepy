@@ -1,5 +1,5 @@
 ---
-title: "Secure model inference"
+title: "Secure Model Inference on Encrypted Data"
 ---
 
 ```{python}
@@ -20,18 +20,19 @@ either.
 With FHE the hospital encrypts patient biomarkers, sends the
 encrypted values to the lab, the lab applies its weighted-sum scoring
 to them while they stay encrypted, and the hospital decrypts the
-scores. The
-biomarker values never appear in cleartext on the lab's machine, and
-the lab's coefficients are never sent to the hospital. These are the
-*transport* guarantees and they are what the pipeline below
-illustrates. They are not the whole story of deploying a
-model-as-a-service — see the threat model below.
+scores. The biomarker values never appear in cleartext on the lab's
+machine, and the lab's coefficients are never sent to the hospital.
+These are the *transport* guarantees and they are what the pipeline
+below illustrates. They are not the whole story of deploying a
+model-as-a-service — see *Threat model: model extraction from the
+hospital side* below.
 
 This is the two-party companion to the multi-site master/worker
 pattern ([MLE](mle.qmd), [Cox](cox.qmd)). Unlike those, there is no
 aggregator and no consensus: one client (hospital) holds the secret
 key and queries one server (lab) which holds the model coefficients in
-cleartext.
+cleartext. The homomorphic primitives all come from the
+`openfhe-python` binding.
 
 ## Scenario: weighted biomarker score
 
@@ -42,11 +43,7 @@ $$\text{score} = w_1 x_1 + w_2 x_2 + w_3 x_3 + w_4 x_4 + b$$
 where $x_i$ are biomarker values and $w_i, b$ are proprietary
 coefficients.
 
-## Hospital side: encrypt the biomarkers
-
-Eight patients, each with four biomarker values. We pack each biomarker
-*across patients* — one encrypted value per biomarker, with patient
-values in the slots.
+## Setup: hospital's context and patient data
 
 ```{python}
 from homomorphepy import fhe_context, packed_codec, Ct
@@ -57,6 +54,9 @@ keys = cc.KeyGen()
 cc.EvalMultKeyGen(keys.secretKey)     # for encrypted * encrypted; unused below
 codec = packed_codec(cc)
 
+# 8 patients, each with 4 biomarker values. We pack each biomarker
+# across patients: one encrypted value per biomarker, with the patient
+# values in its slots, so one operation acts on every patient at once.
 biomarker1 = [1.2, 0.8, 1.5, 0.3, 2.1, 0.9, 1.1, 1.8]
 biomarker2 = [0.5, 1.1, 0.3, 0.8, 0.2, 1.4, 0.7, 0.6]
 biomarker3 = [2.0, 1.5, 2.3, 1.0, 1.8, 2.1, 1.6, 2.5]
@@ -68,21 +68,21 @@ ct1, ct2, ct3, ct4 = (
 )
 ```
 
-## Lab side: evaluate the model without decrypting
+## Lab side: apply the model to encrypted data
 
-The lab's weights never leave the lab, and the encrypted values it
-receives are opaque to it. The scoring expression reads exactly as it would in
-the clear — that is what the operator wrapper buys:
+The lab receives the encrypted biomarkers and applies its
+proprietary model — without ever seeing patient values.
 
 ```{python}
-# The lab's proprietary model. Never shared with the hospital.
+# Lab's proprietary model weights (never shared with the hospital)
 w = [0.35, -0.20, 0.50, 0.15]
 b = 1.2
 
+# Encrypted score = w1*x1 + w2*x2 + w3*x3 + w4*x4 + b
 ct_score = ct1 * w[0] + ct2 * w[1] + ct3 * w[2] + ct4 * w[3] + b
 ```
 
-## Hospital side: decrypt the scores
+## Hospital side: decrypt the results
 
 ```{python}
 pt = cc.Decrypt(ct_score.raw, keys.secretKey)
@@ -118,51 +118,34 @@ floating-point precision.
 assert max_error < 1e-6
 ```
 
-## Packing
-
-All eight patients are scored in four multiply-adds rather than eight
-separate evaluations. Each encrypted value holds *one biomarker across
-all patients* in its slots, and one arithmetic operation acts on every
-slot at once, so a single multiply scales that biomarker for everyone
-simultaneously. That layout is what makes CKKS practical for problems
-of this shape.
-
 ## The same run, in one call
 
 ```{python}
 from homomorphepy.examples import secure_inference
 
 result = secure_inference.run()
+result.max_error
 ```
-
-```{python}
-#| echo: false
-from IPython.display import Markdown
-
-rows = "\n".join(
-    f"| {i} | {enc:.4f} | {clear:.4f} | {band} |"
-    for i, (enc, clear, band) in enumerate(
-        zip(result.scores_encrypted, result.scores_cleartext, result.bands), 1
-    )
-)
-Markdown("| patient | encrypted score | cleartext score | risk |\n"
-         "|---|---|---|---|\n" + rows)
-```
-
-Maximum deviation from the cleartext computation:
-`{python} f"{result.max_error:.1e}"`.
 
 ## Transport guarantees
 
-Two things, both necessary for a model-as-a-service deployment where
-the lab is not trusted with patient data:
+The pipeline above delivers two concrete protections:
 
-* biomarker values never appear in cleartext outside the hospital;
-* the lab's coefficients never reach the hospital in cleartext.
+1. **Biomarker values never appear in cleartext outside the
+   hospital.** The lab's view of the protocol consists of the
+   encrypted values it received and the encrypted score it returned.
+2. **The lab's coefficients $w$ and $b$ are never sent to the
+   hospital in cleartext.** They are used only to construct the
+   returned encrypted score inside the lab's Python session.
 
-These are necessary conditions for a model-as-a-service deployment
+| Party    | Cleartext view |
+|----------|----------------|
+| Hospital | Patient biomarkers (local), decrypted scores |
+| Lab      | Encrypted values only — no cleartext biomarker values, no cleartext scores |
+
+These are necessary conditions for any model-as-a-service deployment
 that does not trust the lab with cleartext patient data. They are not
-sufficient, as the next section shows.
+sufficient conditions, as the next section shows.
 
 ## Threat model: model extraction from the hospital side
 
@@ -179,10 +162,10 @@ queries by submitting the standard basis:
 - $\mathbf{e}_4 = (0,0,0,1)\ \Rightarrow\ \text{score} = w_4 + b$
 
 Subtracting the first score from each of the others recovers the four
-weights exactly. We can run this attack here: wrap the lab's scoring
-pipeline as a function that closes over $w$ and $b$ without revealing
-them, then pack the five probes across slots 1–5 of the four encrypted
-biomarker vectors.
+weights exactly. We can run this attack in the same Python session:
+wrap the lab's scoring pipeline as a function that closes over $w$ and
+$b$ without revealing them, then pack the five probes across slots 1–5
+of the four encrypted biomarker vectors.
 
 ```{python}
 # Lab pipeline wrapped as a function. Closes over `w` and `b`; the
@@ -244,19 +227,50 @@ to layer defenses *on top of* the FHE transport:
   the budget is exhausted. This composes with output perturbation
   rather than replacing it.
 - **Threshold FHE.** Splitting the secret key across several parties
-  (see [Cox with threshold keys](cox-threshold.qmd) for the
+  (see the [Cox threshold page](cox-threshold.qmd) for the
   master/worker case) changes who can decrypt and under what audit
   trail. The hospital alone can no longer mount the adaptive-query
   attack; decryption requires cooperation from the other key-holders.
 - **Non-linear scoring structure.** A linear model is the trivial
   extraction case. Non-linear scorers (the logistic model of
-  [encrypted logistic prediction](encrypted-regression.qmd),
-  polynomial compositions) resist closed-form basis-vector attacks,
-  though approximation attacks from the model-extraction literature
-  still apply.
+  [encrypted regression](encrypted-regression.qmd), polynomial
+  compositions) resist closed-form basis-vector attacks, though
+  approximation attacks from the model-extraction literature still
+  apply.
 
-The example above shows the transport mechanics end to end. It is a
+The page above shows the transport mechanics end-to-end. It is a
 *toy illustration* in that the linear scorer plus hospital-held secret
 key is exactly the configuration where the five-query attack works; a
 production model-as-a-service deployment is the transport layer plus
 at least one of the defenses above.
+
+## Network protocol: serialization
+
+In practice the hospital and lab are on different machines. All
+objects serialize for network transport:
+
+```{python}
+import tempfile
+from pathlib import Path
+
+import openfhe
+
+tdir = Path(tempfile.mkdtemp())
+openfhe.SerializeToFile(str(tdir / "context.bin"), cc.cc, openfhe.BINARY)
+openfhe.SerializeToFile(str(tdir / "pubkey.bin"), keys.publicKey, openfhe.BINARY)
+openfhe.SerializeToFile(str(tdir / "patient_bm1.bin"), ct1.raw, openfhe.BINARY)
+
+# Lab receives the serialized files
+cc_lab, _ = openfhe.DeserializeCryptoContext(str(tdir / "context.bin"), openfhe.BINARY)
+ct_lab, _ = openfhe.DeserializeCiphertext(str(tdir / "patient_bm1.bin"), openfhe.BINARY)
+
+# Lab applies its weights to the deserialized encrypted value
+ct_weighted = Ct(ct_lab, cc_lab) * 0.35
+
+# Lab returns the result
+openfhe.SerializeToFile(str(tdir / "weighted.bin"), ct_weighted.raw, openfhe.BINARY)
+
+# Hospital receives, deserializes, decrypts
+ct_recv, _ = openfhe.DeserializeCiphertext(str(tdir / "weighted.bin"), openfhe.BINARY)
+codec.decode(cc.Decrypt(ct_recv, keys.secretKey), 8)
+```

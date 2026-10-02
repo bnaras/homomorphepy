@@ -1,6 +1,5 @@
 ---
 title: "Precision"
-subtitle: "What it means for an encrypted answer to be correct"
 ---
 
 ```{python}
@@ -48,15 +47,9 @@ Results carry an approximation error that grows with the depth of the
 computation and shrinks as the scaling factor widens.
 
 ```{python}
-# The encryption itself is randomized, so a single encrypt/decrypt is a
-# draw and not a measurement -- consecutive draws of the same setting
-# differ by up to a factor of two, enough to reverse the sign of a
-# comparison between two rows. Every cell below is the mean over N_REP
-# fresh encryptions of the *same* values under the *same* keys.
-#
-# At N_REP = 8 the depth-1 vs depth-2 ratio at magnitude 1 wandered over
-# 0.9-1.5 across runs, either side of "no difference"; at 40 it settles.
-# The whole table costs a few seconds.
+# Encryption is randomized, so a single encrypt/decrypt is a draw and
+# not a measurement. Every cell below is the mean over N_REP fresh
+# encryptions of the same values under the same keys.
 N_REP = 40
 
 
@@ -89,7 +82,8 @@ def ckks_error(depth, scaling_mod_size, values, weights=None):
 
 # The three settings at a given magnitude are run on the SAME draw, so
 # the comparison between them is controlled: only the parameter under
-# study changes.
+# study changes. Redrawing per row would confound the setting with the
+# sample.
 settings = (
     ("sum", 1, 50, None),
     ("sum, wider scale", 1, 59, None),
@@ -107,21 +101,34 @@ for magnitude in (1.0, 1e2, 1e4):
 
 ```{python}
 #| echo: false
+import math
 from IPython.display import Markdown
 
+# Scientific notation explicitly: these span ten orders of magnitude,
+# and any fixed number of decimal places renders most of them as zero.
+def tex_sci(x):
+    e = math.floor(math.log10(abs(x)))
+    return f"${x / 10**e:.2f} \\times 10^{{{e}}}$"
+
+def tex_pow10(x):
+    return "$1$" if x == 1 else f"$10^{{{round(math.log10(x))}}}$"
+
 Markdown(
-    "| computation | magnitude | depth | scaling_mod_size "
-    "| absolute error | relative |\n|---|---|---|---|---|---|\n"
+    "| Computation | Magnitude | Depth | `scaling_mod_size` "
+    "| Absolute error | Relative error |\n|---|---:|---:|---:|---:|---:|\n"
     + "\n".join(
-        f"| {n} | {m:g} | {d} | {sms} | {a:.2e} | {r:.2e} |"
+        f"| {n} | {tex_pow10(m)} | {d} | {sms} | {tex_sci(a)} | {tex_sci(r)} |"
         for n, m, d, sms, a, r in rows
     )
+    + "\n\n: CKKS error against the same computation in the clear."
 )
 ```
 
 ```{python}
 #| echo: false
-# Every ratio quoted below is computed from `rows`, never typed.
+# Every ratio quoted below is computed from `rows`, never typed. A
+# hand-written "about two orders" beside a table that says otherwise
+# is the drift this package works to avoid.
 def pick(label, magnitude, which="absolute"):
     j = 4 if which == "absolute" else 5
     return next(r[j] for r in rows if r[0] == label and r[1] == magnitude)
@@ -148,17 +155,18 @@ to `{python} f"{pick('sum', 1e4, 'relative'):.1e}"`. At magnitude 1 a
 fixed noise floor is large compared to the answer; by magnitude $10^4$
 it is negligible against it. A tolerance calibrated on standardized
 covariates is therefore far too tight for a log-likelihood in the
-hundreds, which is why the [Cox](cox.qmd) examples raise
-`scaling_mod_size` above the default rather than loosening a
-comparison.
+hundreds, which is why the Cox pages raise `scaling_mod_size` above
+the default rather than loosening a comparison.
 
 **Widening the scaling factor helps only where that floor binds.** At
 magnitude 1 it improves the absolute error by a factor of
 `{python} fmt(gain(1.0))`. At magnitude $10^4$ the same change gives a
-factor of `{python} fmt(gain(1e4))` — that is, nothing. Once the floor
-is no longer what limits the answer, a wider scale stops buying
-accuracy while still consuming modulus budget. It is a targeted fix
-for small-magnitude work, not a general accuracy dial.
+factor of `{python} fmt(gain(1e4))` — that is, nothing, and the two
+settings land within a small multiple of each other in either
+direction. Once the floor is no longer what limits the answer, a wider
+scale stops buying accuracy while still consuming modulus budget. It
+is a targeted fix for small-magnitude work, not a general accuracy
+dial.
 
 **Each multiplication costs precision as well as budget.** The depth-2
 row is worse than the depth-1 sum at every magnitude: by a factor of

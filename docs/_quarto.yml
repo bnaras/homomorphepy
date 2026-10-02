@@ -12,9 +12,11 @@ website:
     left:
       - href: index.qmd
         text: Home
+      - href: introduction.qmd
+        text: Introduction
       # Grouped by what the reader is trying to do, not by scheme.
-      # Order matches the Examples section of index.qmd; keep the two
-      # in step.
+      # Order matches the "Which page to read" section of
+      # introduction.qmd; keep the two in step.
       - text: Examples
         menu:
           - aggregation.qmd

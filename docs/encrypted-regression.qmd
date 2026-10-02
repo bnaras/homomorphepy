@@ -1,5 +1,5 @@
 ---
-title: "Encrypted logistic prediction"
+title: "Encrypted Logistic Regression Prediction"
 ---
 
 ```{python}
@@ -9,29 +9,30 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-## The use case
+## Overview
 
-[Secure inference](secure-inference.qmd) scored patients with a
-*linear* model. A logistic model needs the sigmoid
+The [secure-inference page](secure-inference.qmd) evaluated a linear
+model on encrypted patient data. Here the prediction also needs the
+logistic sigmoid
 
-$$\sigma(\eta) = \frac{1}{1 + e^{-\eta}},$$
+$$\sigma(\eta) = \frac{1}{1 + e^{-\eta}}.$$
 
-and encrypted arithmetic offers only addition and multiplication, so on
-its face the sigmoid cannot be evaluated at all without decrypting
-first — which would defeat the exercise.
+The sigmoid is not a polynomial, and BFV/BGV and CKKS support only
+addition and multiplication. We replace it with a Chebyshev
+polynomial approximation, so the whole prediction (linear predictor
+and sigmoid) is computed on encrypted values.
 
-A Chebyshev polynomial approximation closes the gap. The linear
-predictor *and* the sigmoid are evaluated while the data stays
-encrypted, so the researcher never sees a patient. The hospital
-decrypts the predictions but is not sent the coefficients; see the
-caveat at the end.
+## The setting
 
-The scheme is CKKS, since the quantities are real-valued.
+A hospital holds patient data. A researcher holds a trained
+logistic-regression model. The researcher wants to score patients
+without seeing their data; the hospital wants predictions without
+seeing the model coefficients. This is the two-party setting of
+[secure inference](secure-inference.qmd) with a nonlinear model.
 
-## Training, in the clear
+## Step 1: train in the clear
 
-The cohort is a fixed training set of 500 patients shipped with the
-package, rather than a fresh draw.
+The training set of 500 patients ships with the package.
 
 ```{python}
 import numpy as np
@@ -39,80 +40,112 @@ from homomorphepy import load_json
 from homomorphepy.examples.encrypted_regression import fit_logistic
 
 fx = load_json("encrypted_regression")
-age = np.asarray(fx["age"], dtype=float)
+age       = np.asarray(fx["age"], dtype=float)
 biomarker = np.asarray(fx["biomarker"], dtype=float)
-outcome = np.asarray(fx["outcome"], dtype=float)
+outcome   = np.asarray(fx["outcome"], dtype=float)
 
 beta = fit_logistic(age, biomarker, outcome)
-dict(zip(["intercept", "age", "biomarker"], np.round(beta, 4)))
+print("Coefficients (intercept, age, biomarker):", np.round(beta, 4))
 ```
 
-The shipped data also carry an independently computed fit of the same
-model, so the agreement is checkable rather than asserted:
+## Step 2: encrypt patient data
+
+The Chebyshev polynomial needs enough multiplicative depth. We use
+depth 8 and enable `PKESchemeFeature.ADVANCEDSHE`, which provides the
+polynomial-evaluation functions.
 
 ```{python}
-reference = np.asarray(fx["expected"]["beta_fit"], dtype=float)
-float(np.max(np.abs(beta - reference)))
+import openfhe
+from homomorphepy import fhe_context, packed_codec, Ct
+
+cc = fhe_context("CKKS",
+                 multiplicative_depth=8,
+                 scaling_mod_size=50,
+                 batch_size=16,
+                 features=[openfhe.PKESchemeFeature.ADVANCEDSHE])
+keys = cc.KeyGen()
+cc.EvalMultKeyGen(keys.secretKey)
+codec = packed_codec(cc)
+
+new_age = [45, 52, 60, 38, 70, 55, 48, 63,
+           41, 57, 66, 44, 72, 50, 59, 35]
+new_bm  = [-0.5,  0.3, 1.2, -1.0, 0.8, 0.1, -0.3, 1.5,
+           -0.8,  0.6, 0.9, -0.4, 1.1, 0.0,  0.7, -1.2]
+
+ct_age = Ct(cc.Encrypt(keys.publicKey, codec.encode(new_age)), cc.cc)
+ct_bm  = Ct(cc.Encrypt(keys.publicKey, codec.encode(new_bm)),  cc.cc)
 ```
 
-## Scoring under encryption
+## Step 3: evaluate the linear predictor (encrypted)
 
-The whole pipeline is one call. It builds a CKKS context deep enough
-for the polynomial, encrypts a fixed 16-patient panel, evaluates the
-linear predictor and the sigmoid without decrypting, and decrypts only
-the probabilities.
+$\eta = \beta_0 + \beta_1\, \text{age} + \beta_2\, \text{biomarker}$,
+all arithmetic on encrypted data:
 
 ```{python}
-from homomorphepy.examples.encrypted_regression import run
-
-r = run()
-print(f"trained on {r.n_train} patients, scored {r.n_scored}")
-print(f"max error against the cleartext sigmoid: {r.max_error:.2e}")
+ct_eta = ct_age * float(beta[1])
+ct_eta = ct_eta + ct_bm * float(beta[2])
+ct_eta = ct_eta + float(beta[0])
 ```
+
+## Step 4: apply the sigmoid (encrypted)
+
+OpenFHE exposes Chebyshev approximations of common transcendental
+functions, including the logistic sigmoid, `EvalLogistic()`. The
+interval $[a, b]$ must cover the range of $\eta$ for these patients.
+A degree-16 approximation fits within the depth set above; its error
+is measured in Step 5.
 
 ```{python}
-#| echo: false
-import pandas as pd
-from homomorphepy.examples.encrypted_regression import PANEL_AGE, PANEL_BIOMARKER
-
-pd.DataFrame({
-    "age": PANEL_AGE,
-    "biomarker": PANEL_BIOMARKER,
-    "encrypted": np.round(r.probs_encrypted, 6),
-    "cleartext": np.round(r.probs_cleartext, 6),
-}).head(8)
+ct_prob = Ct(cc.cc.EvalLogistic(ct_eta.raw, -4.0, 4.0, 16), cc.cc)
 ```
 
-## What this costs
+## Step 5: decrypt predictions
 
-Each multiplication uses one level of the multiplicative depth set in
-the context. The linear example needed a depth of 2; the Chebyshev
-polynomial needs 8. That is why the context above is configured
-differently, and deeper computations need larger parameters and more
-memory.
+```{python}
+encrypted_probs = np.asarray(
+    codec.decode(cc.Decrypt(ct_prob.raw, keys.secretKey), 16), dtype=float)
 
-The approximation interval matters just as much. The sigmoid is fitted
-on $[-4, 4]$, which has to cover the range the linear predictor can
-actually reach on the data being scored. Outside that interval a
-Chebyshev fit diverges quickly, and it does so silently — the decrypted
-numbers simply stop being probabilities.
+eta_clear       = beta[0] + beta[1] * np.asarray(new_age) + beta[2] * np.asarray(new_bm)
+cleartext_probs = 1.0 / (1.0 + np.exp(-eta_clear))
+max_err = float(np.max(np.abs(encrypted_probs - cleartext_probs)))
+print(f"Max absolute error vs cleartext sigmoid: {max_err:.2e}")
+```
 
-## What this does and does not give you
+## The same run, in one call
 
-The transport guarantee is the same as secure inference: patient values
-never appear in the clear outside the hospital, and the coefficients
-are not sent to the hospital.
+```{python}
+from homomorphepy.examples import encrypted_regression
 
-The caveat is the same too. The hospital holds the secret key and
-chooses the queries, so it can recover the coefficients from
-predictions on chosen inputs. The sigmoid makes this harder than in
-the linear case but does not prevent it. A deployment would need
-further protection, such as output differential privacy, query limits,
-or threshold FHE.
+r = encrypted_regression.run()
+r.max_error
+```
 
-**Approximation error.** CKKS is approximate, and so is the Chebyshev
-fit. For deployment, precision would need to be validated for the use
-case.
+## Summary
 
-**Performance.** Encrypted computation is orders of magnitude slower
-than cleartext.
+1. Model coefficients are applied to encrypted data. The researcher
+   never sees the patient data. The hospital decrypts the predictions
+   but is not sent the coefficients, as in [secure
+   inference](secure-inference.qmd); see the threat-model caveat
+   below.
+2. The sigmoid is evaluated on encrypted values. There is no
+   intermediate decryption and no exchange between the parties during
+   the computation.
+3. The CKKS error is small. The maximum absolute error against the
+   cleartext sigmoid is `{python} f"{max_err:.1e}"`.
+
+## Limitations
+
+- **Multiplicative depth**: each multiplication uses one level of the
+  depth set in the context. Deeper computations need larger
+  parameters and more memory.
+- **Approximation error**: CKKS is approximate. For deployment,
+  precision would need to be validated for the use case.
+- **Performance**: encrypted computation is orders of magnitude slower
+  than cleartext.
+- **Threat model**: the model-extraction caveat of the
+  [secure-inference page](secure-inference.qmd) applies here. The
+  hospital holds the secret key and could recover the coefficients
+  from predictions on chosen inputs. The sigmoid makes this harder
+  than in the linear case but does not prevent it. A deployment would
+  need further protection, such as output differential privacy, query
+  limits, or threshold FHE.

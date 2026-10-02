@@ -1,5 +1,5 @@
 ---
-title: "Maximum likelihood estimation under CKKS"
+title: "Distributed Maximum Likelihood Estimation"
 ---
 
 ```{python}
@@ -21,7 +21,7 @@ $$
 -\ell(\lambda \mid y) \;=\; -\sum_{i=1}^{n} \log p(y_i \mid \lambda).
 $$
 
-Fitting that in the clear is a few lines of SciPy:
+In Python, this is a few lines using `scipy.optimize.minimize()`:
 
 ```{python}
 import numpy as np
@@ -47,6 +47,12 @@ counts with the others or with a central aggregator, but they are
 willing to *jointly* compute the same MLE provided no party learns
 anything about another party's contribution.
 
+To simulate this, partition `y`:
+
+```{python}
+y1, y2, y3 = y[:20], y[20:27], y[27:]
+```
+
 The negative log-likelihood factorizes additively:
 
 $$
@@ -57,18 +63,10 @@ so each site can compute its local term in the clear and only the
 *sum* of the three local likelihoods needs to travel between parties —
 and the sum must not reveal the individual addends.
 
-To simulate this, partition `y` across three sites of unequal size:
-
-```{python}
-y1, y2, y3 = y[:20], y[20:27], y[27:]
-[len(y1), len(y2), len(y3)]
-```
-
 ## The protocol
 
-We use the **master/worker** topology that federated analyses such as
-distcomp [@NarasimhanRubinGrossBenderskyLavori2017; @distcomp] and
-DataSHIELD [@WolfsonDataSHIELD2010; @GayeDataSHIELD2014] deploy: a star with the
+We use the **master/worker** topology that distcomp- and
+DataSHIELD-style federated analyses actually deploy: a star with the
 master at the center and one independent worker per site. There is no
 chain and no inter-site communication.
 
@@ -93,21 +91,22 @@ encrypted summaries (and, after homomorphic summation, the decrypted
 total). With a single-decrypter master, the master *could* decrypt
 individual $E(\ell_i)$ in principle; the cryptographic story
 strengthens when paired with threshold key generation, where no single
-party holds the secret key. That is revisited in
-[Cox with threshold keys](cox-threshold.qmd).
+party holds the secret key. We will revisit that in the [Cox threshold
+page](cox-threshold.qmd).
 
 ## Implementation
 
-The actor surface — `Site` (worker), `Master`, the master/worker
-runner — is the same code as in any other distributed-statistics
-example here; only the master's *backend* changes.
-`make_ckks_master()` takes a context and key pair and routes
-encryption and decryption through CKKS. The worker class and the
-`aggregate()` runner are backend-agnostic.
+The computational topology — `Site` (worker), `Master`, the
+master/worker runner — is the same code as in any other
+distributed-stats page in this package; only the master's *backend*
+changes. `homomorphepy` exports `make_ckks_master()` that takes a
+context and key pair. The master decrypts with the secret key; each
+site encrypts its own contribution under the public key it is given at
+setup. The worker class and the `aggregate()` runner are
+backend-agnostic.
 
-The per-site negative log-likelihood is the same plain numeric
-function it would be in the cleartext case — the site never touches an
-encrypted value.
+The per-site negative log-likelihood is the same plain Python function
+it would be in the cleartext case:
 
 ```{python}
 def local_nll(data, lam):
@@ -138,14 +137,9 @@ workers = [make_worker("Site 1", y1, local_nll),
            make_worker("Site 3", y3, local_nll)]
 
 master = make_ckks_master("Master", cc, keys).set_workers(workers)
-master
 ```
 
-### 3. Run the optimizer through the encrypted channel
-
-Each call to `master.aggregate()` encrypts the three local
-log-likelihoods, sums them homomorphically, and decrypts only the
-total. The optimizer is handed that as an ordinary objective.
+### 3. Run `minimize()` through the encrypted channel
 
 ```{python}
 n_calls = 0
@@ -166,96 +160,38 @@ lambda_hat = float(fit1.x[0])
 lambda_hat, n_calls
 ```
 
-The standard error comes from the analytic Fisher information for a
-Poisson rate, $\sqrt{\hat\lambda/n}$ — not from the optimizer's
-internal curvature estimate:
-
-```{python}
-import math
-
-n = len(y)
-se = math.sqrt(lambda_hat / n)
-ci = (lambda_hat - 1.96 * se, lambda_hat + 1.96 * se)
-se, ci
-```
+The CKKS-based estimate differs from the cleartext estimate `fit0` by
+`{python} f"{abs(lambda_hat - float(fit0.x[0])):.1e}"`. No site ever
+revealed its individual counts to any other party.
 
 ```{python}
 assert abs(lambda_hat - float(np.mean(y))) < 1e-4
 ```
 
-### The same run, in one call
+## The same run, in one call
 
 ```{python}
 from homomorphepy.examples import mle
 
 fit = mle.run()
+fit.lambda_encrypted, fit.lambda_pooled, fit.abs_difference
 ```
-
-```{python}
-#| echo: false
-from IPython.display import Markdown
-
-lo, hi = fit.ci()
-Markdown(f"""
-| | value |
-|---|---|
-| site sizes | {fit.site_sizes} (n = {fit.n_total}) |
-| **encrypted MLE** | **{fit.lambda_encrypted:.6f}** |
-| pooled cleartext MLE | {fit.lambda_pooled:.6f} |
-| difference | {fit.abs_difference:.2e} |
-| standard error | {fit.std_error:.4f} |
-| 95% CI | ({lo:.4f}, {hi:.4f}) |
-| objective evaluations | {fit.n_objective_calls} |
-""")
-```
-
-The CKKS-based estimate differs from the cleartext estimate by
-`{python} f"{fit.abs_difference:.1e}"`. No site ever revealed its
-individual counts to any other party.
-
-Each of those `{python} fit.n_objective_calls` objective evaluations
-was a full encrypt / homomorphic-sum / decrypt round. **The optimizer
-itself is unmodified** — it is handed a function and never told that
-encryption is involved.
-
-For a Poisson rate the maximum likelihood estimate is the sample mean
-in closed form, so the reference above is exact rather than a second
-numerical fit; the only thing under test is the path through
-encryption.
-
-### On the standard error
-
-BFGS accumulates an approximation to the inverse Hessian as a *search*
-device, and it is a poor variance estimate — which is why the standard
-error above is computed analytically rather than read out of
-`fit.hess_inv`.
-
-### On the finite-difference step
-
-A finite-difference gradient divides a difference of function values
-by the step $h$, so any noise in the objective is amplified by $1/h$.
-It is reasonable to worry that CKKS noise would therefore swamp the
-gradient. Measured at these parameters it does not: the decrypted
-objective is accurate to about 1e-13 on a value of magnitude 100, so
-the implied gradient noise at SciPy's default step is ~1.7e-6 against
-a true gradient of ~0.78 — five orders of margin.
-
-The step becomes load-bearing only under [differential
-privacy](dp.qmd), where the injected noise is many orders larger than
-CKKS's and the $1/h$ amplification does real damage.
 
 ## Beyond MLE
 
-For Poisson MLE the protocol only adds encrypted values. The same
-holds for stratified [Cox regression](cox.qmd), where the sites'
-partial log-likelihoods are summed. Multiplying encrypted values is
-needed only when the computation itself runs on encrypted data, as in
-the sigmoid of [encrypted logistic prediction](encrypted-regression.qmd).
+For Poisson MLE the protocol uses only additions, so the additive
+Paillier scheme would also suffice. CKKS saves the integer encoding of
+real numbers that Paillier needs. The same holds for stratified [Cox
+regression](cox.qmd), where the sites' partial log-likelihoods are
+summed. Multiplying encrypted values is needed only when the
+computation itself runs on encrypted data, as in the sigmoid of
+[encrypted regression](encrypted-regression.qmd).
 
-## Caveat
+## CAVEAT
 
 This is a teaching example. In production you would want a real
 communication transport, threshold key generation so no single party
 holds the full secret, and persistent serialization at site
-boundaries. The point is not the deployment story but the *structure*
-of a privacy-preserving distributed computation.
+boundaries. The point of this page is not the deployment story but the
+*structure* of a privacy-preserving distributed computation built on
+homomorphic encryption.

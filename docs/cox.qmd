@@ -1,6 +1,5 @@
 ---
-title: "Distributed Cox regression"
-subtitle: "Stratified partial likelihood over a master/worker protocol"
+title: "Distributed Stratified Cox Regression"
 ---
 
 ```{python}
@@ -49,31 +48,44 @@ the sum and not the individual terms.
 
 ## DLBCL lymphoma cohort
 
-We use the diffuse large-B-cell lymphoma cohort of @Rosenwald2002, the
-same dataset @BayleFanLou2025 use to motivate distributed Cox
-estimation, excluding the five patients with zero follow-up time.
+```{python}
+#| echo: false
+from homomorphepy import load_dlbcl, site_order
 
-The published outcome predictor combines four gene-expression
-signatures (germinal-center B cell, lymph node, proliferation, and
-MHC class II) and the single gene BMP6. We model the hazard as a
-function of those five variables, stratified by molecular subgroup —
-GCB, ABC and Type III — and we treat each subgroup as a site. The three sites differ in size; the protocol does
-not require equal sizes.
+df = load_dlbcl()
+_sg = site_order()
+coh = dict(
+    n      = len(df),
+    deaths = int(df["status"].sum()),
+    mfu    = f"{df['time'].median():.1f}",
+    sgn    = {s: int((df["Subgroup"] == s).sum()) for s in _sg},
+    sgd    = {s: int(df.loc[df["Subgroup"] == s, "status"].sum()) for s in _sg})
+```
+
+We use the diffuse large-B-cell lymphoma (DLBCL) cohort of
+@Rosenwald2002, the same dataset that @BayleFanLou2025 use to
+motivate distributed Cox estimation. The table `load_dlbcl()` returns
+excludes the five patients with zero follow-up time (following
+@BayleFanLou2025), leaving `{python} coh["n"]` patients with
+`{python} coh["deaths"]` deaths over a median follow-up of
+`{python} coh["mfu"]` years. The published outcome predictor combines
+four gene-expression signatures (germinal-center B cell, lymph node,
+proliferation, and MHC class II) and the single gene BMP6. We model
+the hazard as a function of those five variables, stratified by
+molecular subgroup (GCB, ABC, Type III), and we treat each subgroup as
+a site. The three sites differ in size (GCB
+$n=`{python} coh["sgn"]["GCB"]`$, ABC $n=`{python} coh["sgn"]["ABC"]`$,
+Type III $n=`{python} coh["sgn"]["Type III"]`$, with
+`{python} coh["sgd"]["GCB"]`, `{python} coh["sgd"]["ABC"]`, and
+`{python} coh["sgd"]["Type III"]` deaths respectively); the protocol
+does not require equal sizes.
 
 ```{python}
+import numpy as np
 from homomorphepy import load_dlbcl, site_order
 
 df = load_dlbcl()
 COVARIATES = ["GCB_sig", "LN_sig", "Prolif_sig", "BMP6", "MHC2_sig"]
-
-df.groupby("Subgroup", observed=True).agg(n=("time", "size"),
-                                          events=("status", "sum"))
-```
-
-Each subgroup becomes a site holding only its own rows:
-
-```{python}
-import numpy as np
 
 def site_frame(name):
     m = (df["Subgroup"] == name).to_numpy()
@@ -84,24 +96,46 @@ def site_frame(name):
                                    for c in COVARIATES]),
     }
 
-sites = {name: site_frame(name) for name in site_order()}
-list(sites)
+cox_data = {name: site_frame(name) for name in site_order()}
+df.groupby("Subgroup", observed=True).agg(n=("time", "size"),
+                                          events=("status", "sum"))
 ```
 
-## The site-level computation
+## The aggregated fit
 
-Each site evaluates its own Cox partial log-likelihood at the
-coefficient vector the aggregator broadcasts. This is ordinary
-statistical code — the site never touches an encrypted value.
-
-`ties="efron"` is not optional here. `PHReg` defaults to Breslow's
-method, and the two conventions differ materially on this cohort — a
-silent wrong answer rather than an error. The size of the disagreement
-is measured at the end of this page.
+If all data were in one place, we would fit the stratified Cox model
+directly:
 
 ```{python}
 from statsmodels.duration.hazard_regression import PHReg
 
+agg_model = PHReg(df["time"], df[COVARIATES], status=df["status"],
+                  strata=df["Subgroup"].cat.codes, ties="efron")
+agg_fit = agg_model.fit()
+print(agg_fit.summary())
+agg_loglik = (agg_model.loglike(np.zeros(len(COVARIATES))),
+              agg_model.loglike(agg_fit.params))
+agg_loglik
+```
+
+The first log-likelihood is at $\beta = 0$ (the null model); the
+second is at the MLE. The goal is to reproduce these estimates without
+the three sites pooling their data.
+
+## The protocol
+
+We use the same master/worker topology as the MLE page: master
+broadcasts $\beta$, each worker computes its local Cox partial
+log-likelihood at $\beta$, encrypts it under the master's public key,
+and returns the encrypted value. The master sums the encrypted
+contributions homomorphically and decrypts the total. Mathematically
+nothing changes from the MLE case; only the local computation differs.
+
+The local computation uses `PHReg.loglike()`, which returns the partial
+log-likelihood at the supplied $\beta$ without fitting. `PHReg`
+defaults to Breslow's treatment of ties; we pass `ties="efron"`.
+
+```{python}
 def local_cox_nll(data, beta):
     b = np.asarray(beta, dtype=float).ravel()
     model = PHReg(data["time"], data["X"],
@@ -109,76 +143,44 @@ def local_cox_nll(data, beta):
     return float(-model.loglike(b))
 ```
 
-## The master/worker protocol
+## Wiring up the protocol
 
-The master holds a CKKS key pair and broadcasts the current $\beta$.
-Each worker evaluates its own $\ell_s(\beta)$, encrypts it under the
-master's public key, and returns the encrypted value. The master adds
-the encrypted contributions and decrypts only the total.
+The summed negative log-likelihood on this cohort is
+`{python} f"{-agg_loglik[0]:.0f}"` at $\beta = 0$ and
+`{python} f"{-agg_loglik[1]:.0f}"` at the MLE. CKKS represents values
+of this size at the default scaling parameters. We raise
+`scaling_mod_size` from 50 to 59 for extra precision and set
+`first_mod_size = 60`, the library default, explicitly.
 
 ```{python}
 from homomorphepy import fhe_context, make_worker, make_ckks_master
 
 cc = fhe_context("CKKS", multiplicative_depth=1, scaling_mod_size=59,
                  first_mod_size=60, batch_size=8)
+keys = cc.KeyGen()
 
 workers = [make_worker(name, data, local_cox_nll)
-           for name, data in sites.items()]
-
-master = make_ckks_master("Master", cc, cc.KeyGen())
+           for name, data in cox_data.items()]
+master = make_ckks_master("Master", cc, keys)
 master.set_workers(workers)
-master
 ```
 
-```{python}
-#| echo: false
-from IPython.display import Markdown
+## Iterative MLE through the encrypted protocol
 
-_beta_mle = PHReg(
-    df["time"].to_numpy(dtype=float),
-    np.column_stack([df[c].to_numpy(dtype=float) for c in COVARIATES]),
-    status=df["status"].to_numpy(dtype=int),
-    strata=df["Subgroup"].cat.codes.to_numpy(),
-    ties="efron",
-).fit().params
-_nll_0 = sum(local_cox_nll(d, np.zeros(len(COVARIATES))) for d in sites.values())
-_nll_mle = sum(local_cox_nll(d, _beta_mle) for d in sites.values())
-Markdown(
-    f"The summed negative log-likelihood on this cohort is {_nll_0:.0f} "
-    f"at $\\beta = 0$ and {_nll_mle:.0f} at the MLE. CKKS represents "
-    "values of this size at the default scaling parameters. We raise "
-    "`scaling_mod_size` from 50 to 59 for extra precision and set "
-    "`first_mod_size = 60`, the library default, explicitly."
-)
-```
-
-The master sees the *sum* of the local contributions and never an
-individual site's value. It can, however, decrypt — it owns the secret
-key. Removing that assumption is what the
-[threshold version](cox-threshold.qmd) of this example does.
-
-## Running the fit
-
-Every objective evaluation is a full round trip: broadcast $\beta$,
-each worker encrypts its local contribution, and the master sums the
-encrypted contributions and decrypts the total.
+We hand `scipy.optimize.minimize()` a function that looks like a
+standard multivariate negative log-likelihood. Each call drives one
+master/worker round and returns a single decrypted scalar.
 
 ```{python}
 from scipy.optimize import minimize
 
-n_calls = 0
-
 def encrypted_nll(beta):
-    global n_calls
-    n_calls += 1
     value = master.aggregate(np.asarray(beta, dtype=float))
     return 1e12 if (value is None or np.isnan(value)) else float(value)
 
-opt = minimize(encrypted_nll, x0=np.zeros(len(COVARIATES)),
+fit = minimize(encrypted_nll, x0=np.zeros(len(COVARIATES)),
                method="L-BFGS-B", options={"ftol": 1e-9})
-
-beta_hat = np.asarray(opt.x)
-n_calls, opt.success
+beta_hat = np.asarray(fit.x)
 ```
 
 Standard errors come from the Hessian of the same encrypted objective
@@ -193,6 +195,10 @@ se = np.sqrt(np.diag(np.linalg.inv(fd_hessian(encrypted_nll, beta_hat))))
 pd.DataFrame({"estimate": beta_hat, "std. error": se}, index=COVARIATES)
 ```
 
+```{python}
+float(-fit.fun)
+```
+
 ## Comparison with the cleartext fit
 
 To check the encrypted fit, we run the identical objective a second
@@ -202,11 +208,11 @@ starting values and tolerance, no encryption.
 
 ```{python}
 def cleartext_nll(beta):
-    return sum(local_cox_nll(d, beta) for d in sites.values())
+    return sum(local_cox_nll(d, beta) for d in cox_data.values())
 
-opt_plain = minimize(cleartext_nll, x0=np.zeros(len(COVARIATES)),
+fit_plain = minimize(cleartext_nll, x0=np.zeros(len(COVARIATES)),
                      method="L-BFGS-B", options={"ftol": 1e-9})
-beta_plain = np.asarray(opt_plain.x)
+beta_plain = np.asarray(fit_plain.x)
 ```
 
 ```{python}
@@ -226,98 +232,60 @@ The encrypted fit agrees with the cleartext fit to within
 assert enc_diff.max() < 1e-4
 ```
 
+## What just happened
+
+`scipy.optimize.minimize()` ran its usual L-BFGS-B iterations. Each
+time it asked for the negative log-likelihood at a point in
+$\mathbb{R}^5$, the function ran one CKKS master/worker round across
+the three sites and returned one decrypted number. `minimize()` was
+not modified, and its result matches the cleartext fit of the same
+objective.
+
 ## The same run, in one call
 
 ```{python}
 from homomorphepy.examples import cox
 
-fit = cox.run(backend="ckks")
+result = cox.run(backend="ckks")
+result.loglik_encrypted, result.loglik_centralized, result.max_abs_difference
 ```
-
-```{python}
-#| echo: false
-sizes = " · ".join(f"{k} n={v} ({fit.site_events[k]} events)"
-                   for k, v in fit.site_sizes.items())
-rows = "\n".join(
-    f"| `{r['coefficient']}` | {r['encrypted']:.6f} "
-    f"| {fit.std_errors[r['coefficient']]:.6f} "
-    f"| {r['cleartext']:.6f} | {r['abs_diff']:.1e} |"
-    for r in fit.table()
-)
-Markdown(
-    f"Sites: {sizes}\n\n"
-    "| coefficient | encrypted | std. error | cleartext | difference |\n"
-    "|---|---|---|---|---|\n" + rows
-)
-```
-
-The encrypted fit agrees with the cleartext fit to
-`{python} f"{fit.max_abs_difference:.1e}"`, over
-`{python} fit.n_objective_calls` objective evaluations — each one a
-full encrypt, homomorphic sum, and decryption. Log-likelihood
-`{python} f"{fit.loglik_encrypted:.6f}"` encrypted against
-`{python} f"{fit.loglik_centralized:.6f}"` for statsmodels' own
-pooled fit.
 
 ## What this demonstrates
 
-**A general-purpose optimizer composes with the encrypted channel
-without modification.** `scipy.optimize.minimize` was handed a Python
-callable and never learned that evaluating it involved three parties
-and a public-key cryptosystem. Nothing in the optimizer was patched,
-subclassed, or configured for encryption.
+1. **Python optimizers work unchanged.** Any routine that takes the
+   objective as a function, such as `scipy.optimize.minimize()`, can
+   be given one that computes its value through the encrypted
+   protocol.
+2. **Stratified Cox regression decomposes additively** across strata,
+   so the master/worker scheme used for Poisson MLE ([MLE
+   page](mle.qmd)) works unchanged for survival analysis. Only the
+   local computation changes (`PHReg` instead of the Poisson
+   log-likelihood).
+3. **CKKS encrypts real numbers directly.** An additive scheme such as
+   Paillier would need each value split into integer and fractional
+   parts, with the fractional part approximated as a fraction with a
+   fixed denominator. CKKS needs no such encoding.
+4. **The master/worker classes are reusable.** The same exported
+   `Site` / `Master` classes and `aggregate()` runner drive both this
+   Cox page and the Poisson MLE page — only the per-worker local
+   function differs.
 
-**The additive structure of the stratified partial likelihood is what
-makes this work.** Only a sum crosses the site boundary, and a sum is
-exactly what an additively homomorphic scheme computes. No approximation
-of the likelihood was needed.
+## Caveats and extensions
 
-**The comparison isolates the encryption.** The cleartext fit runs the
-same objective through the same optimizer from the same start, so the
-difference between the two fits is what encrypting the aggregation
-changed. The [precision](precision.qmd) page describes CKKS error.
-
-## Two tie conventions, on purpose
-
-Tied event times admit more than one treatment. Efron's method is the
-usual default in survival software; `statsmodels.PHReg` defaults to
-Breslow's. On this cohort follow-up is recorded to a tenth of a year
-across 235 patients, so ties are common and the conventions disagree:
-
-```{python}
-def pooled_ll(beta, ties):
-    return sum(
-        PHReg(d["time"], d["X"], status=d["status"], ties=ties).loglike(beta)
-        for d in sites.values()
-    )
-
-gap = max(abs(pooled_ll(b, "efron") - pooled_ll(b, "breslow"))
-          for b in (np.zeros(len(COVARIATES)), beta_hat))
-round(gap, 2)
-```
-
-A discrepancy of `{python} f"{gap:.2f}"` in pooled log-likelihood is a
-silent wrong answer, not an error, if the argument is forgotten.
-
-This example passes `ties="efron"`. The [Cox-lasso](cox-lasso.qmd)
-example uses Breslow instead, because its partial likelihood is
-written symbolically for a convex solver and that form *is* Breslow's;
-Efron has no comparable convex-atom formulation.
-
-## Caveats
-
-**The master can decrypt.** It owns the secret key, so the protocol
-protects the sites from each other and from an eavesdropper, but not
-from the master. It sees only the sum by *construction of the
-protocol*, not by any cryptographic guarantee — a master that chose to
-decrypt an individual contribution could. The
-[threshold version](cox-threshold.qmd) removes that assumption, with no
-change to the statistics.
-
-**The summed log-likelihood is itself informative.** Even an honest
-master learns $\ell(\beta)$ at every point the optimizer visits, which
-is a functional of all the data. Bounding what that discloses is what
-the [differential privacy](dp.qmd) page takes up.
-
-**A teaching example.** Production would want a real communication
-transport and persistent serialization at site boundaries.
+- **Performance**: each function evaluation requires three CKKS
+  encryptions, three encrypted additions, and one decryption. CKKS
+  encrypt/decrypt dominates the wall-clock cost.
+- **Information leakage**: the master sees the value of the joint
+  log-likelihood at each $\beta$. That is less than the individual
+  contributions, and it is what `minimize()` needs. Hiding it as well
+  would require running Newton-Raphson on encrypted values, which CKKS
+  allows but which is considerably more complex.
+- **Threshold key generation**: in a real deployment the secret key
+  would be split across the sites (n-of-n threshold), so that no single
+  party, the master included, can decrypt intermediate values on its
+  own. The [Cox threshold page](cox-threshold.qmd) adds this.
+- **Beyond Cox**: the same protocol applies to any model whose
+  log-likelihood is a sum over data partitions, such as generalized
+  linear models, mixed-effects models with site-specific random
+  effects, and frailty survival models. Only the local likelihood
+  evaluation changes.

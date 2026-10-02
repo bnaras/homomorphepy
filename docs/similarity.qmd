@@ -1,5 +1,5 @@
 ---
-title: "Federated similarity search"
+title: "Federated Cosine Similarity with Site-Private Fine-Tuned Models"
 ---
 
 ```{python}
@@ -9,342 +9,819 @@ import os
 os.environ.setdefault("OMP_NUM_THREADS", "2")
 ```
 
-## The use case
+## Introduction
 
-A clinician has an unusual case and wants to ask a network of hospitals
-whether anyone has seen patients like it. Each hospital holds
-embeddings of its own patients, produced by a model it fine-tuned
-privately. Nobody will share embeddings, and nobody will share a model.
+Similarity search across silos is another common problem. A clinician
+at one hospital sees an unusual case and wants to ask "do other
+hospitals in our network have similar patients?" — without sending the
+patient out, without the other hospitals revealing which of their
+patients were checked, and without any single party (including a
+coordinating master) able to decrypt a similarity score on its own.
 
-There are two obstacles, and only one of them is cryptographic.
+Modern foundation models map patient data (radiology reports, chest
+X-rays, pathology slides) into a fixed-dimensional vector space where
+geometric proximity tracks clinical similarity. The natural primitive
+is cosine similarity between such embeddings, which reduces to an
+inner product on unit-norm vectors, which is exactly what threshold
+CKKS computes efficiently.
 
-The **geometric** obstacle: embeddings from different fine-tunes do not
-live in a shared space. An inner product between a query from the
-public base model and a hospital's privately fine-tuned embedding is
-not a similarity — it is a comparison between two different coordinate
-systems.
+The wrinkle is that hospitals do not all use the *same* model. We
+assume each hospital starts from a public foundation model and
+fine-tunes it on its own data for its own purposes — it does not
+constrain the result to be an isometry of the public model. The
+fine-tuned embeddings therefore differ from the public baseline by a
+generically *non-isometric* transformation of the geometry, and a
+query in the public-model space is no longer directly comparable to a
+database vector in a hospital's private space.
 
-The **cryptographic** obstacle: the query must not be readable by any
-hospital, the databases must not be readable by anyone, and no single
-party may be able to decrypt.
+One way to close the gap is with a per-site *compatibility adapter*
+$A_k$, fit post hoc on a public anchor cohort. The adapter lives on a
+one-parameter family indexed by a near-isometry penalty $\mu$:
+orthogonal Procrustes at one end ($\mu\to\infty$), unconstrained least
+squares at the other ($\mu = 0$), near-orthogonal maps in between. It
+is deployed in either of two ways — applied to the encrypted query
+(the homomorphic matrix–vector multiply, valid as a cosine near the
+orthogonal end), or folded into the database offline so the encrypted
+query reduces to a plain inner product. Threshold decryption recovers
+every candidate score at the master, which ranks them and returns the
+top-`k` matches; no party can decrypt any intermediate value
+unilaterally.
 
-## The adapter
+## The setup
 
-Each site fixes the geometry locally. A public *anchor cohort* is
-published; each site embeds it with its own fine-tuned model, and then
-fits the orthogonal map that best carries the public geometry onto its
-own. That map is the site's **compatibility adapter**, and it never
-leaves the site.
+Three sites — labeled $S_1, S_2, S_3$ — each hold a cohort of
+patients. Each cohort is embedded with the site's privately
+fine-tuned model into $\mathbf{R}^p$ for some fixed dimension
+$p$ (the architecture is shared across sites; only the weights
+differ).
 
-Orthogonality is doing real work here. An orthogonal map preserves
-inner products, so moving the query into a site's coordinates leaves
-the similarity unchanged. A general linear map would stretch some
-directions and shrink others, and the number that came back would no
-longer be a cosine.
+The query enters the system from a clinician who does not have
+access to any site's private model. They embed their candidate
+patient with the *public* foundation model, producing $q \in
+\mathbf{R}^p$. The query is encrypted under a joint threshold
+key whose secret-key material is shared $n$-of-$n$ across the
+three sites.
 
-The direction also matters, and it is easy to get backwards: the
-adapter is applied to the *incoming query*, so it must map public
-coordinates to site coordinates. The database stays where it is.
+The retrieval target is the top-$k$ patients across all sites
+whose private-model embeddings are most cosine-similar to the
+query, returned as a list of $(\text{site\_id},
+\text{local\_patient\_id}, \text{score})$ tuples.
 
-## The synthetic network
+The difficulty is that $q$ lives in the public-model geometry while
+each site's database lives in the site's private-model geometry. We
+close the gap with a per-site *compatibility adapter* $A_k$ fit on a
+public anchor cohort. $A_k$ is held privately by site $k$ and never
+leaves; it is applied to encrypted queries to bring them into
+agreement with site $k$'s geometry before the inner-product step (or,
+equivalently, folded into the site's database offline).
 
-Three sites, each with its own fine-tune and its own small cohort. The
-drift is drawn as an exactly orthogonal matrix, which matters for what
-comes next: it means the orthogonal adapter can undo it *exactly*, so
-the comparison at the end can assert equality rather than settle for a
-tolerance. The [sweeps](#does-the-adapter-have-to-be-orthogonal) later
-on this page relax that.
+## Threat model
+
+Three sites and one untrusted aggregator (the master):
+
+- **Sites $S_1, S_2, S_3$** each hold private patient
+  embeddings, a private compatibility adapter $A_k$, and a secret-key
+  share $\mathit{sk}_k$. They are honest-but-curious among
+  themselves and toward the master. Each site sees the master's
+  encrypted query but cannot decrypt it; each site sees its own
+  database in the clear (it is its own data); each site never
+  sees other sites' databases or scores.
+- **Master** holds no secret-key material. It receives the
+  encrypted query from the querier, broadcasts it to the sites,
+  collects their encrypted scores, orchestrates the n-of-n
+  partial-decryption ceremony, sorts the results, and returns the
+  top-$k$ to the querier. A curious or compromised master cannot
+  decrypt anything by itself.
+- **Querier** sees only the top-$k$ result tuples. Repeated
+  adaptive queries leak structural information about the
+  database in the same Hyrum-style sense as any retrieval
+  system; this leakage is acknowledged but not eliminated.
+
+What the master sees, by stage:
+
+1. The encrypted query $\mathit{ct}_q$. Not decryptable alone.
+2. Per-site encrypted scores, one per candidate patient, with the
+   site id, local index, and label in the clear alongside.
+3. Partial decryptions from each site. Not decryptable
+   individually.
+4. After fusion, **every** candidate score in the clear. It sorts
+   these and returns the top-$k$ to the querier.
+
+The master decrypts the whole score vector, not just
+the $k$ it releases, and it does so because this implementation
+ranks in the clear. Nothing can do better without encrypted
+comparison: the global top-$k$ is not knowable until enough scores
+are known to rank them. So the master's view is one row per candidate
+patient in the whole federation — site, local index, label, and
+score — and the querier's view is the top-$k$ of it.
+
+The site-private compatibility adapters $\{A_k\}$ never leave
+their sites. Each is applied to an encrypted vector while it
+stays encrypted — an unencrypted matrix times an encrypted
+vector — or else folded into the site's database offline, so the
+adapter never appears in the clear at any party other than its
+owner.
+
+## The protocol
+
+The protocol has three phases. The setup phase runs once,
+offline; the query phase and result phase run for each query.
+
+**Setup phase.**
+
+1. The three sites jointly generate a CKKS threshold key pair
+   ($n$-of-$n$). Joint rotation keys for slot rotations
+   $1, 2, \ldots, p-1$ are also generated by an $n$-of-$n$
+   ceremony.
+2. A public anchor cohort of patients with public-model
+   embeddings is published.
+3. Each site embeds the anchor cohort with its private
+   fine-tuned model and fits its $p \times p$ compatibility
+   adapter $A_k$ along the $\mu$ family (orthogonal Procrustes
+   at $\mu\to\infty$, least squares at $\mu = 0$).
+4. Each site stores its local cohort, embedded with the
+   private model and normalized to unit length — and, for the
+   fold (Design 1) deployment, the public-compatible images of
+   those vectors.
+
+**Query phase.** The querier embeds their candidate patient
+with the public model, normalizes to unit length, encrypts
+into a single slot-packed encrypted vector under the joint
+public key, and broadcasts that to the master.
+
+For each site $k$:
+
+5. The site receives the encrypted query $\mathit{ct}_q$.
+6. The site applies its private $A_k$ to the encrypted query via
+   diagonal-encoded matrix–vector multiplication, producing
+   $\mathit{ct}_{A_k q}$ (Design 2). Near the orthogonal end of
+   the family the result is unit-norm, so the score is a genuine
+   cosine; alternatively the site skips this step and scores the
+   query directly against its folded public-compatible database
+   (Design 1).
+7. The site computes inner products against each of its local
+   embeddings $v_{k,i}$ via slot-wise multiplication followed
+   by log-$p$ rotation-and-add slot summation, producing one
+   encrypted scalar per local patient.
+8. The site returns its encrypted scores to the master,
+   alongside its local patient indices in the clear.
+
+**Result phase.**
+
+9. The master concatenates encrypted scores across all sites.
+   In v1, local indices are kept in the clear alongside the
+   encrypted scores; encrypted top-$k$ selection in CKKS is
+   feasible but adds depth and complexity orthogonal to this
+   page's pedagogical aim.
+10. The master collects partial decryption shares from all
+    three sites for the encrypted scores. Fusion yields the
+    scores in the clear; the master sorts them there and
+    returns the top-$k$ to the querier.
+
+## Synthetic data
+
+The page uses fully synthetic data so it renders quickly. The
+phenotype-mixture model below is the simplest setup that gives a
+meaningful retrieval ground truth.
 
 ```{python}
 import numpy as np
 import pandas as pd
-from homomorphepy.examples.similarity import DGP, simulate
+from homomorphepy.examples import similarity as sim
 
-anchor_public, sites = simulate()
-p = DGP["p"]
+rng = np.random.default_rng(20260428)
 
-pd.DataFrame({
-    "site":     [s["name"] for s in sites],
-    "patients": [len(s["database"]) for s in sites],
-    "drift is orthogonal to": [
-        f"{np.max(np.abs(s['drift'].T @ s['drift'] - np.eye(p))):.1e}"
-        for s in sites
-    ],
-})
+p             = 32
+n_sites       = 3
+cohort_sizes  = (80, 60, 100)
+n_anchor      = 100
+n_phenotypes  = 5
+top_k         = 5
 ```
 
-The public anchor cohort is `{python} anchor_public.shape[0]` embeddings
-of width `{python} p`. Every site embeds those same anchors with its own
-model, which is the only thing the sites hold in common.
-
-## The adapters
-
-Each site fits its own adapter and keeps it. Fitting is a Procrustes
-problem — the orthogonal $A$ minimizing
-$\lVert A Z_{\text{public}}^\top - Z_{\text{site}}^\top\rVert$ — solved
-by an SVD, entirely locally and in the clear.
+A patient is one of `n_phenotypes` clinical phenotypes. Each
+phenotype is a Gaussian cluster in $\mathbf{R}^p$. Phenotype
+labels are the retrieval ground truth: a query of phenotype
+$j$ should be matched to database patients of phenotype $j$.
 
 ```{python}
-from homomorphepy.examples.similarity import fit_adapter
+phenotype_centers = rng.normal(size=(n_phenotypes, p))
 
-for s in sites:
-    s["adapter"] = fit_adapter(anchor_public, s["anchor_site"])
-    # The adapter should reproduce the site's own anchor embeddings
-    # from the public ones.
-    s["anchor_error"] = float(np.max(np.abs(
-        s["adapter"] @ anchor_public.T - s["anchor_site"].T
-    )))
+def unit_rows(Z):
+    return Z / np.linalg.norm(Z, axis=1, keepdims=True)
 
-[f"{s['anchor_error']:.1e}" for s in sites]
+def embed_public(n):
+    labels  = rng.integers(0, n_phenotypes, size=n)
+    centers = phenotype_centers[labels]
+    noise   = rng.normal(scale=0.4, size=(n, p))
+    return dict(z=unit_rows(centers + noise), label=labels)    # unit norm
 ```
 
-Reconstruction to floating-point noise, as promised — the drift is
-orthogonal and an orthogonal map inverts it exactly.
-
-## Threshold keys, and rotation keys without a secret key
-
-The querier's vector is encrypted under a joint public key that no
-single party can invert.
+A site fine-tunes for its own purposes; it does not constrain
+the result to be an isometry of the public model. We therefore
+model the per-site drift as a *non-isometric* linear map
+$B_k = Q_k D_k$ — a random rotation $Q_k$ composed with a
+diagonal stretch $D_k = \mathrm{diag}(e^{\beta g})$, $g$
+standard normal. The parameter $\beta$ is the non-isometry
+magnitude: $\beta = 0$ recovers an exactly orthogonal drift
+(the special case where the geometry is merely rotated), and
+$\beta > 0$ stretches the embedding directions anisotropically,
+as a freely fine-tuned model generically would. The site's
+embeddings are unit-normalized after the map, so the drift acts
+on the sphere.
 
 ```{python}
-from homomorphepy import fhe_context, make_worker, make_threshold_master
+import inspect
+
+print(inspect.getsource(sim.random_drift))
+```
+
+```{python}
+def embed_private(z_public, B_k):
+    # Site k's fine-tuned model in column-vector convention:
+    # f_k(x) = B_k · f(x). For a matrix z_public of n row-stacked
+    # vectors, the private embeddings are z_public @ B_k.T, then
+    # unit-normalized (the drift acts on the sphere; under a
+    # non-isometric B the normalization is a genuine nonlinearity).
+    return unit_rows(z_public @ B_k.T)
+```
+
+The public anchor cohort is a small, publicly-available set
+of patient examples. Each site embeds the anchors twice — once
+with the public model (giving $Z_{\text{pub}}$, identical at
+every site by construction) and once with its own private
+fine-tuned model (giving $Z_{\text{priv},k}$). The pair drives a
+post-hoc *compatibility adapter* $A_k$ that maps the site's
+private geometry back to the public protocol, fit by
+
+$$
+\min_{A}\ \lVert Z_{\text{priv},k}\,A - Z_{\text{pub}}\rVert_F^2
+        \;+\; \mu\,\lVert A^\top A - I\rVert_F^2 .
+$$
+
+The penalty parameter $\mu$ traces a one-parameter family. At
+$\mu \to \infty$ the adapter is forced orthogonal and the fit is
+the classical orthogonal Procrustes problem, solved in closed
+form by the singular value decomposition — this is the rigid
+endpoint, exact only when the drift is itself isometric. At
+$\mu = 0$ the adapter is an unconstrained least-squares map,
+computed with a small ridge on the normal equations, the best
+public-space fit but generically non-isometric. Intermediate
+$\mu$ interpolates: a *near-orthogonal* map. We deploy $A_k$ by
+applying it to the encrypted query, $\langle A_k q,\, v\rangle$,
+which recovers the public-space cosine $\langle q, u\rangle$ when
+the adapter inverts the drift (exactly, in the orthogonal limit).
+
+```{python}
+print(inspect.getsource(sim.fit_adapter_mu))
+```
+
+A convex alternative is Gram (metric) learning: fit a
+positive-semidefinite $M$ matching the public Gram matrix,
+$\min_{M\succeq0}\lVert Z_{\text{priv}}MZ_{\text{priv}}^\top -
+Z_{\text{pub}}Z_{\text{pub}}^\top\rVert_F^2$. Its minimizer is
+$M = A_{\text{LS}}A_{\text{LS}}^\top$, and we deploy its symmetric
+square root. The sweep below compares it with the $\mu$ family.
+
+```{python}
+print(inspect.getsource(sim.fit_gram))
+```
+
+A moderate non-isometry magnitude drives the protocol
+walk-through; the sweeps later vary it:
+
+```{python}
+beta_demo = 0.6
+mu_demo   = np.inf    # orthogonal endpoint for the encrypted walk-through
+```
+
+The site cohorts and anchor cohort are sampled from the same
+phenotype-mixture model (in real deployments the anchor cohort
+is publicly distributed and its phenotype distribution is set
+once; we approximate by independent sampling).
+
+```{python}
+public_anchor = embed_public(n_anchor)
+public_query  = embed_public(1)         # one query for the protocol walk-through
+
+site_cohorts = [embed_public(n) for n in cohort_sizes]
+```
+
+We later fit one adapter $A_k$ per site, build both the
+raw-private and folded public-compatible databases, and report
+retrieval recall as the non-isometry $\beta$ and the penalty
+$\mu$ vary.
+
+## Threshold key generation
+
+The three sites jointly construct a CKKS keypair so that the
+secret key is split $n$-of-$n$ across them.
+`make_threshold_master()` walks that chain across the sites: each
+site generates its own share, keeps it, and passes on only a
+public key. The master is handed the joint public key and holds
+no secret material at all.
+
+Because the joint key is built *from* the sites, the sites are
+constructed first.
+
+```{python}
+from homomorphepy import fhe_context, make_worker, make_threshold_master, Ct, packed_codec
 from homomorphepy.examples.similarity import CKKS_PARAMS
 
-ctx = fhe_context("CKKS", **CKKS_PARAMS)
-holders = [make_worker(s["name"], None, lambda d, t: 0.0) for s in sites]
-master = make_threshold_master("Aggregator", ctx, holders)
-CKKS_PARAMS
-```
+cc = fhe_context("CKKS", **CKKS_PARAMS)
 
-Everything below encrypts with the public bundle, which we read off a
-*site* rather than the aggregator: it is what that site kept from
-wiring, and it is all any party needs in order to encrypt under the
-joint key. Printing it is how you see that it is public in full.
+sites = [make_worker(f"Site {k + 1}", None, lambda data, theta: None)
+         for k in range(n_sites)]
 
-```{python}
-pub = holders[0].params
+master = make_threshold_master("master", cc, sites)
+
+# Published once, when key generation completes, to every party that
+# will encrypt -- the sites and the querying party alike. It is public
+# in full, and it is the last thing anyone needs from the aggregator.
+# `site.params` asks a site what it is holding; no aggregator is
+# involved, and the object has no slot a key share could sit in.
+pub = sites[0].params
 pub
 ```
 
-Everything on this page needs one more kind of key. Both operations
-below are built from **rotations** of an encrypted vector's slots, and a
-rotation needs an evaluation key of its own.
+A CKKS encrypted value holds a vector of numbers, one per *slot*,
+and arithmetic acts on all slots at once. Setting `batch_size` to
+$p$ gives each encrypted value exactly $p$ = `{python} p` slots, so
+one embedding fills one encrypted value, a coordinate per slot.
 
-In the ordinary single-key setting those are derived from the secret
-key. Under threshold keys there is no secret key to derive them from —
-that is the entire point — so they are built by an $n$-of-$n$ ceremony
-mirroring the one that produced the public key. Each site contributes a
-share of every rotation key in turn:
+Site $k$'s share lives in `sites[k]._share` and nowhere else.
+`master.decrypt(ct, length)` runs the $n$-of-$n$ ceremony by asking
+each site for a partial decryption — no party ever holds a usable
+secret unilaterally, the aggregator included.
+
+Everything below encrypts with `pub`. No party consults the aggregator
+again; each holds what it was given and works from that.
+
+## Joint rotation keys
+
+The matrix–vector multiply step in the protocol is implemented
+as a *diagonal-encoded matvec*. For a $p \times p$ matrix $M$
+and an encrypted vector $q \in \mathbf{R}^p$ held one component
+per slot:
+
+$$
+M \cdot q \;=\; \sum_{i=0}^{p-1} d_i \odot \mathrm{rot}(q, i),
+$$
+
+where $d_i$ is the $i$-th diagonal of $M$ (a $p$-vector, and
+never encrypted), $\odot$ is slot-wise multiplication, and
+$\mathrm{rot}(q, i)$ cyclically rotates the slots of $q$ by
+$i$. Each rotation requires a precomputed *rotation key*. In
+single-key CKKS these are generated from the secret key; in
+threshold CKKS they are generated by an $n$-of-$n$ ceremony
+that mirrors the encryption-key ceremony.
+
+The inner-product step adds a second use of rotation keys: the
+log-$p$ rotation-and-add reduction that sums the slots of an
+encoded $p$-vector into slot 0. The same set of rotation
+indices serves both purposes; we generate keys for indices
+$1, \ldots, p-1$ and rely on the subset that each step needs.
+
+`make_joint_rotation_keys()` runs that ceremony at the sites: the
+lead site generates its rotation keys under its own share, each
+remaining site folds in its own share of the keys in turn, and the
+accumulated map is registered under the joint public key's tag.
+Nothing collects the shares into one place.
 
 ```{python}
 from homomorphepy.actors import make_joint_rotation_keys
 
-make_joint_rotation_keys(master, range(1, p))
+rotation_indices = range(1, p)
+make_joint_rotation_keys(master, rotation_indices)
 ```
 
-That is `{python} p - 1` rotation amounts, each requiring a pass around
-all three sites. It happens once, at setup.
+After insertion, any value encrypted under the joint public key can
+be rotated by any index in `rotation_indices` via
+`EvalRotate(ct, idx)`.
+
+A round-trip smoke test confirms the joint rotation key works.
+We encrypt a known vector, rotate by 3 slots, decrypt via the
+$n$-of-$n$ ceremony, and check that slot $i$ now holds
+$x_{(i+3) \bmod p}$:
 
 ```{python}
-from homomorphepy import Ct
+x         = np.arange(1, p + 1, dtype=float)
+ct_x      = pub.encrypt(x.tolist())
+ct_rot    = Ct(cc.cc.EvalRotate(ct_x.raw, 3), cc.cc)
+recovered = np.asarray(master.decrypt(ct_rot, length=p), dtype=float)
 
-# A round trip through one rotation, to show the keys work: rotating by
-# k brings slot k into slot 0.
-ct_probe = pub.encrypt(np.arange(p, dtype=float).tolist())
-ct_rot = Ct(ctx.cc.EvalRotate(ct_probe.raw, 3), ctx.cc)
-round(float(np.asarray(master.decrypt(ct_rot, length=p), dtype=float)[0]), 6)
+expected = x[(np.arange(p) + 3) % p]
+rot_err  = float(np.max(np.abs(recovered - expected)))
+assert rot_err < 1e-6
+print(f"rotation round-trip max error: {rot_err:.2e}")
 ```
 
-## Applying the adapter under encryption
+## Per-site adapter fit and database setup
 
-A matrix times an *encrypted* vector cannot be written as a matrix
-product — there is no encrypted vector to index into. It can be written
-using the matrix's generalized diagonals, $d_i[j] = A[j, (j+i) \bmod p]$:
+For the encrypted walk-through we fit the adapter at the
+orthogonal endpoint ($\mu = \infty$), so the map applied to the
+query is exactly norm-preserving and the matrix–vector multiply
+below produces a unit-norm result — the regime in which the
+raw-private-database matvec (Design 2) is a valid cosine. The
+recall sweeps later vary $\mu$ and the drift. Each site's
+fine-tuned model is the non-isometric $B_k$; the adapter $A_k$
+is fit post hoc on the public anchor cohort.
 
-$$A\,q \;=\; \sum_{i=0}^{p-1} d_i \odot \mathrm{rot}(q, i).$$
+```{python}
+B = [sim.random_drift(p, beta_demo, rng) for _ in range(n_sites)]
 
-Every term multiplies the encrypted vector by an *unencrypted* diagonal.
-That is much cheaper than multiplying two encrypted quantities, and
-because the diagonals never need encrypting the whole product costs a
+# Each site's private database, embedded under that site's
+# fine-tuned model and unit-normalized on the sphere.
+db = [dict(z=embed_private(c["z"], B[k]), label=c["label"])
+      for k, c in enumerate(site_cohorts)]
+
+# Each site fits its compatibility adapter on the anchor cohort.
+A_hat = [sim.fit_adapter_mu(public_anchor["z"],
+                            embed_private(public_anchor["z"], B[k]), mu_demo)
+         for k in range(n_sites)]
+
+# Design-1 deployment: the adapter folded into the database
+# offline, giving unit-norm public-compatible vectors that an
+# encrypted public-model query scores directly. (At mu = inf the
+# adapter is orthogonal, so folding is norm-preserving and
+# Design 1 and Design 2 coincide; they part company at finite mu.)
+db_fold = [dict(z=unit_rows(db[k]["z"] @ A_hat[k]), label=db[k]["label"])
+           for k in range(n_sites)]
+
+# Setup diagnostics the master would receive: anchor-reconstruction
+# error and the adapter's departure from isometry.
+print(f"Per-site adapter diagnostics (beta = {beta_demo}, mu = inf):")
+for k in range(n_sites):
+    Zr    = embed_private(public_anchor["z"], B[k])
+    recon = np.linalg.norm(Zr @ A_hat[k] - public_anchor["z"])
+    aniso = np.linalg.norm(A_hat[k].T @ A_hat[k] - np.eye(p))
+    print(f"  site {k + 1}: anchor recon {recon:.2e},  ||A^T A - I||_F {aniso:.2e}")
+```
+
+## Diagonal-encoded matrix-vector multiply
+
+The CKKS-friendly way to multiply an unencrypted $p \times p$
+matrix into an encrypted vector is the *diagonal encoding*. The
+matrix $M$ is decomposed into its $p$ generalized diagonals,
+each an unencrypted length-$p$ vector:
+
+$$
+d_i[j] = M[\,j,\, (j + i) \bmod p\,], \qquad i = 0, 1, \ldots, p-1.
+$$
+
+The matrix–vector product becomes
+
+$$
+M \cdot q \;=\; \sum_{i=0}^{p-1} d_i \,\odot\, \mathrm{rot}(q, i),
+$$
+
+where $\odot$ is slot-wise multiplication and $\mathrm{rot}(q, i)$
+is the $i$-step cyclic slot rotation. Each term multiplies an
+encrypted vector by an unencrypted one and adds the result to a
+running encrypted total. The cost is $p$ rotations and $p$ such
+multiplications per matrix-vector product, and it consumes a
 single level of the precision budget.
 
-```{python}
-from homomorphepy.examples.similarity import diagonals
-from homomorphepy import packed_codec
-
-def matvec(ct, diags, ctx):
-    """A q, for encrypted q and an unencrypted A given as diagonals.
-
-    Takes the crypto context, not an aggregator: mapping an encrypted
-    query through a site's own adapter needs nothing from the party
-    that will later fuse the scores.
-    """
-    cc, codec = ctx.cc, packed_codec(ctx)
-    total = None
-    for i, d in enumerate(diags):
-        if not np.any(d):                       # a zero diagonal adds nothing
-            continue
-        rot = ct if i == 0 else Ct(cc.EvalRotate(ct.raw, i), cc)
-        term = Ct(cc.EvalMult(rot.raw, codec.encode(d.tolist())), cc)
-        total = term if total is None else Ct(cc.EvalAdd(total.raw, term.raw), cc)
-    return total
-```
-
-Check it against the cleartext product on a real query:
+Multiplying by an unencrypted vector rather than an encrypted
+one is what keeps that cost down: the adapter $A_k$ is the
+site's own, so it never needs encrypting, and the operation is
+correspondingly cheaper than multiplying two encrypted
+quantities together.
 
 ```{python}
-rng = np.random.default_rng(20260914)
-query = rng.normal(size=p)
-query /= np.linalg.norm(query)
-
-ct_query = pub.encrypt(query.tolist())
-ct_mapped = matvec(ct_query, diagonals(sites[0]["adapter"]), ctx)
-
-got = np.asarray(master.decrypt(ct_mapped, length=p), dtype=float)
-want = sites[0]["adapter"] @ query
-float(np.max(np.abs(got - want)))
+print(inspect.getsource(sim.diagonals))
 ```
-
-The package ships the same routine, so a page that drifts from the
-implementation would show it here as a failed comparison rather than as
-prose that quietly stops being true.
-
-## The inner product, and folding the slots
-
-With the query in the site's coordinates, the similarity against one
-patient is an inner product. Multiplying slot-wise by that patient's
-own unencrypted vector puts the $p$ products in $p$ slots; the sum then
-has to be gathered into one slot.
-
-Doing that by $p$ rotations would be wasteful. Repeated
-rotate-and-add doubles the stride each step and finishes in
-$\log_2 p$ = `{python} int(np.log2(p))` rotations, leaving the total in
-every slot — slot 0 included, which is the one we read.
 
 ```{python}
-def slot_sum(ct, p, cc):
-    """Fold every slot into slot 0 in log2(p) rotate-and-add steps."""
-    out, step = ct, 1
-    while step < p:
-        out = Ct(cc.EvalAdd(out.raw, Ct(cc.EvalRotate(out.raw, step), cc).raw), cc)
-        step *= 2
-    return out
-
-patient = sites[0]["database"][0]
-site_codec = packed_codec(ctx)
-term = Ct(ctx.cc.EvalMult(ct_mapped.raw, site_codec.encode(patient.tolist())),
-          ctx.cc)
-score = np.asarray(master.decrypt(slot_sum(term, p, ctx.cc), length=p),
-                   dtype=float)[0]
-
-float(score), float(want @ patient), abs(float(score) - float(want @ patient))
+def encrypted_matvec(ct_q, M, cc, p):
+    diags = sim.diagonals(M)
+    codec = packed_codec(cc)
+    ct_acc = None
+    for i in range(p):
+        d_pt    = codec.encode(diags[i].tolist())
+        ct_rot  = ct_q if i == 0 else Ct(cc.cc.EvalRotate(ct_q.raw, i), cc.cc)
+        ct_term = Ct(cc.cc.EvalMult(ct_rot.raw, d_pt), cc.cc)
+        ct_acc  = ct_term if ct_acc is None else Ct(cc.cc.EvalAdd(ct_acc.raw, ct_term.raw), cc.cc)
+    return ct_acc
 ```
 
-One encrypted score, agreeing with the cleartext inner product, and at
-no point did any party hold the query in the clear.
-
-## What each party does
-
-Putting the pieces in their places:
-
-**The querier** encrypts its embedding under the joint public key and
-sends it. It learns only the scores that come back.
-
-**Each site** applies its own adapter to the encrypted query with
-`matvec`, then runs the slot-wise multiply and `slot_sum` once per
-patient. Its adapter and its database stay put; only encrypted scores
-leave. Note what it never does: decrypt. It cannot.
-
-**The aggregator** collects the encrypted scores, with each
-candidate's site and local index in the clear, and runs the
-$n$-of-$n$ decryption ceremony on each, then sorts. It holds no key
-share, and after fusion it holds every candidate's score.
-
-## The whole protocol
+A round-trip smoke test on a known query vector confirms the
+matvec recovers $A_1 \cdot q$ to floating-point precision:
 
 ```{python}
-from homomorphepy.examples.similarity import run
-
-r = run()
-print(f"{r.n_candidates} candidates across 3 sites, embedding width {r.p}")
-for name, i, score in r.top_k:
-    print(f"  {name} patient {i}: {score:.6f}")
+q_demo = public_query["z"][0]
+ct_q   = pub.encrypt(q_demo.tolist())
+ct_Aq  = encrypted_matvec(ct_q, A_hat[0], cc, p)
+Aq_recovered = np.asarray(master.decrypt(ct_Aq, length=p), dtype=float)
+Aq_expected  = A_hat[0] @ q_demo
+matvec_err   = float(np.max(np.abs(Aq_recovered - Aq_expected)))
+print(f"matvec max error (site 1): {matvec_err:.2e}")
 ```
 
-Nothing above was decrypted except the candidate scores, and those
-only through the $n$-of-$n$ ceremony. The aggregator holds every
-candidate's score after fusion and returns the top $k$.
+## Inner product against the local database
 
-## Does it give the right answer?
+After the matvec, the encrypted query has been mapped by the
+adapter into site $k$'s private geometry (unit-norm at the
+orthogonal endpoint used here). The cosine similarity against a
+private-database vector $v$ (also unit-norm, and never
+encrypted since it never leaves the site) is just
 
-The protocol is only worth anything if it returns what the same search
-would have returned in the clear.
+$$
+\cos(A_k q,\, v) \;=\; \langle A_k q,\, v \rangle
+\;=\; \sum_{j=1}^{p} (A_k q)_j \cdot v_j.
+$$
+
+In CKKS this is a slot-wise multiply of the matvec output by the
+unencrypted $v$, followed by a log-$p$ rotate-and-add
+*slot-summation reduction* that places the summed inner product
+in slot 0.
 
 ```{python}
-print(f"max score error vs cleartext : {r.max_abs_score_error:.2e}")
-print(f"identical ranking            : {r.rank_agreement}")
+def slot_sum_reduction(ct, p, cc):
+    # Standard CKKS log-p reduction. The rotations are cyclic over
+    # the whole batch, and here the batch is exactly p slots wide,
+    # so after the loop *every* slot holds the same value: the full
+    # sum_{j=1}^{p} ct[j]. We read slot 0 by convention.
+    step = p // 2
+    while step >= 1:
+        ct = Ct(cc.cc.EvalAdd(ct.raw, cc.cc.EvalRotate(ct.raw, step)), cc.cc)
+        step //= 2
+    return ct
+
+def encrypted_inner_product(ct_x, v_plain, cc, p):
+    pt_v    = packed_codec(cc).encode(np.asarray(v_plain).tolist())
+    ct_prod = Ct(cc.cc.EvalMult(ct_x.raw, pt_v), cc.cc)
+    return slot_sum_reduction(ct_prod, p, cc)
 ```
 
-The scores agree to CKKS approximation error, and the ranking — which
-is what a user actually consumes — is identical.
+A smoke test against a single database vector confirms the
+inner product matches the unencrypted computation at slot 0:
 
-## Does the adapter have to be orthogonal?
+```{python}
+v_test   = db[0]["z"][0]
+ct_score = encrypted_inner_product(ct_Aq, v_test, cc, p)
+score_recovered = float(master.decrypt(ct_score, length=1))
+score_expected  = float(Aq_expected @ v_test)
+ip_err = abs(score_recovered - score_expected)
+print(f"inner-product error (site 1, patient 1): {ip_err:.2e}")
+```
 
-Everything above runs at the orthogonal endpoint, where the adapter
-inverts the drift exactly and the score is a true cosine. But real
-fine-tuning is not orthogonal. A site that trains freely stretches some
-directions more than others, and no rotation can undo that.
+The same `encrypted_inner_product` serves the **Design 1**
+deployment without any matvec: the encrypted *public-model*
+query is scored directly against the folded, public-compatible
+database vectors. At the orthogonal endpoint this matches the
+matvec route exactly; for a non-isometric adapter it is the
+route that stays a valid cosine.
 
-So relax the constraint. Fit the adapter by minimizing
+```{python}
+ct_score_fold  = encrypted_inner_product(ct_q, db_fold[0]["z"][0], cc, p)
+fold_recovered = float(master.decrypt(ct_score_fold, length=1))
+fold_expected  = float(q_demo @ db_fold[0]["z"][0])
+fold_err = abs(fold_recovered - fold_expected)
+print(f"Design-1 inner-product error (site 1, patient 1): {fold_err:.2e}")
+```
 
-$$\lVert Z_{\text{site}} A - Z_{\text{public}}\rVert^2
-  \;+\; \mu \lVert A^\top A - I\rVert^2,$$
+### What is in the slots we do not read
 
-where $\mu \to \infty$ forces orthogonality (the Procrustes solution
-used above), $\mu = 0$ is unconstrained least squares, computed with
-a small ridge on the normal equations, and values in between give
-near-orthogonal maps.
+The score is read from slot 0, but the decrypted value has all
+`{python} p` slots, and `length=1` only limits how many are shown.
+Whoever decrypts can read the rest. If those slots held partial
+sums, they would reveal more than the score.
 
-These sweeps run **in the clear**. The encrypted and unencrypted scores
-agree to $10^{-13}$, so running them through encryption would cost
-hours and change no digit — and what is being asked here is a
-statistical question, not a cryptographic one.
+They do not. The rotations wrap around exactly $p$ slots, so every
+slot ends up holding the full sum. The check below confirms that
+all `{python} p` slots hold the released score.
 
-Each point is a federated retrieval over three sites, averaged over
-replicates of forty queries, so the whole set takes long enough that it
-is recorded once by `docs/_recorded/record_similarity_sweeps.py` rather
-than run on every build. The figure below is drawn from that file; no
-value is typed into this page.
+```{python}
+all_slots = np.asarray(master.decrypt(ct_score, length=p), dtype=float)
+print(f"slots holding the released score: "
+      f"{int(np.sum(np.abs(all_slots - score_recovered) < 1e-6))} of {p} "
+      f"(max deviation {np.max(np.abs(all_slots - score_recovered)):.2e})")
+```
+
+This holds only because the sum covers the whole batch. If several
+patients were packed into one encrypted value, each sum would cover
+only some of the slots, and the other slots would hold partial sums.
+Multiplying by an unencrypted vector that is 1 in slot 0 and 0
+elsewhere clears them. That multiplication uses one level of
+multiplicative depth. With `multiplicative_depth = 3`, the
+matrix–vector multiply and the inner product use two levels, which
+leaves one for it.
+
+## Site function: full per-site protocol step
+
+The site-side computation closes over the site's adapter
+$A_k$ and database $D_k$, takes the encrypted query as input,
+and returns a list of encrypted scores plus the corresponding
+local indices in the clear. This is the **Design 2** branch:
+the adapter is applied to the encrypted query (the matvec), and
+scoring runs against the site's raw private database.
+
+```{python}
+def make_similarity_site_fn(A_k, db_k, cc, p):
+    def site_fn(ct_q):
+        ct_Aq     = encrypted_matvec(ct_q, A_k, cc, p)
+        ct_scores = [encrypted_inner_product(ct_Aq, v, cc, p) for v in db_k["z"]]
+        return dict(scores=ct_scores,
+                    local_index=np.arange(len(ct_scores)),
+                    label=db_k["label"])
+    return site_fn
+
+site_fns = [make_similarity_site_fn(A_hat[k], db[k], cc, p) for k in range(n_sites)]
+```
+
+A timed end-to-end run on the demo query through site 1
+returns one encrypted score per local patient:
+
+```{python}
+import time
+
+t0 = time.perf_counter()
+site1_out = site_fns[0](ct_q)
+site1_elapsed = time.perf_counter() - t0
+print(f"site 1 produced {len(site1_out['scores'])} encrypted scores in {site1_elapsed:.2f} s")
+```
+
+## Master orchestration and threshold-decrypted top-`k`
+
+The master broadcasts the encrypted query to every site,
+collects per-site encrypted scores plus the local patient
+indices and labels in the clear, and runs the $n$-of-$n$ threshold
+decryption ceremony for each score so it can sort them once
+they are in the clear and return the top-`k`.
+
+The decryption pattern is per-patient: each encrypted score
+goes through one threshold-decrypt round. `master.decrypt()` sends
+the encrypted score to each site in turn — `MultipartyDecryptLead` at
+site 1, `MultipartyDecryptMain` at each of the rest, every site
+applying its own share — and fuses the returned partials with
+`MultipartyDecryptFusion`, which needs only the public context. For
+our `{python} sum(cohort_sizes)` total patients this runs in a few
+seconds; production deployments would pack many patients into the
+slots of a single encrypted value and amortize the ceremony.
+
+```{python}
+def run_similarity_query(ct_q, site_fns, master, top_k):
+    # Fan out to every site.
+    rows = []
+    for k, fn in enumerate(site_fns):
+        out = fn(ct_q)
+        # Threshold-decrypt each per-patient inner product. v1 runs
+        # one ceremony per patient; a packed variant that fuses
+        # multiple inner products into a single encrypted value
+        # (via slot tiling) is a natural extension.
+        for i, ct in enumerate(out["scores"]):
+            score = float(master.decrypt(ct, length=1))
+            rows.append(dict(site_id=k + 1, local_index=int(out["local_index"][i]),
+                             label=int(out["label"][i]), score=score))
+    scored = pd.DataFrame(rows).sort_values("score", ascending=False)
+    return scored.head(top_k)
+
+t0 = time.perf_counter()
+top_result = run_similarity_query(ct_q, site_fns, master, top_k=top_k)
+elapsed = time.perf_counter() - t0
+print(f"Top-{top_k} retrieval over {n_sites} sites and {sum(cohort_sizes)} patients in {elapsed:.1f} s")
+print(f"Query phenotype label: {int(public_query['label'][0])}")
+print(top_result.to_string(index=False))
+```
+
+## Reference-truth comparison
+
+The protocol output is meaningful only if the inner products
+computed under encryption agree with the same quantities computed
+in the clear, to within CKKS approximation error. The reference
+computation runs the same $A_k \cdot q$ adapter application and
+inner-product reduction unencrypted on each site's database:
+
+```{python}
+def plaintext_top_k(q, site_data, A_list, top_k):
+    rows = []
+    for k, s_k in enumerate(site_data):
+        Aq     = A_list[k] @ q
+        scores = s_k["z"] @ Aq
+        rows += [dict(site_id=k + 1, local_index=i, label=int(s_k["label"][i]),
+                      score=float(scores[i]))
+                 for i in range(len(scores))]
+    scored = pd.DataFrame(rows).sort_values("score", ascending=False)
+    return scored.head(top_k)
+
+plain_top = plaintext_top_k(q_demo, db, A_hat, top_k)
+
+# Compare encrypted-domain top-k against the cleartext reference
+# by joining on (site_id, local_index).
+compare   = top_result.merge(plain_top, on=["site_id", "local_index"],
+                             suffixes=("_enc", "_plain"))
+score_err = float(np.max(np.abs(compare["score_enc"] - compare["score_plain"])))
+print(f"Top-{top_k} encrypted vs cleartext score max error: {score_err:.2e}")
+
+# Whether the encrypted-domain top-k contains the same
+# (site_id, local_index) pairs as the cleartext reference.
+enc_set   = set(zip(top_result["site_id"], top_result["local_index"]))
+plain_set = set(zip(plain_top["site_id"],  plain_top["local_index"]))
+set_match = len(enc_set & plain_set)
+print(f"Top-{top_k} set match: {set_match} of {top_k}")
+```
+
+## The same run, in one call
+
+`run()` runs the same protocol on the package's built-in cohort of
+three small sites with an exactly orthogonal drift:
+
+```{python}
+r = sim.run()
+r.n_candidates, r.max_abs_score_error, r.rank_agreement
+```
+
+## What the adapter buys: fidelity, posture, and a sweet spot
+
+The encrypted mechanics work to floating-point precision, as the
+smoke tests and reference comparison above confirm (max error
+$\sim 10^{`{python} int(np.floor(np.log10(max(rot_err, matvec_err, ip_err, fold_err, score_err))))`}$).
+So we now investigate three questions:
+
+1. **Fidelity.** When the drift is genuinely non-isometric, does
+   a near-orthogonal or least-squares adapter recover retrieval
+   that the rigid orthogonal Procrustes endpoint ($\mu\to\infty$)
+   cannot?
+2. **Posture.** Where do the two deployments agree — Design 1
+   (fold the adapter into the database offline) and Design 2
+   (apply it to the encrypted query, the matvec) — and where must
+   we prefer one? They coincide only when the adapter is
+   orthogonal, so the per-vector norms it produces are all one.
+3. **Sweet spot.** Does an intermediate $\mu$ ever beat both
+   endpoints, and when?
+
+The sweeps use a less-forgiving cluster configuration than the
+walk-through (unit-norm phenotype centers, so noise competes with
+separation), letting alignment quality rather than trivial
+separability drive recall.
+
+The sweeps are recorded once by
+`docs/_recorded/record_similarity_sweeps.py`, which calls the three
+functions below; the tables and figure read the JSON it writes.
+Federated recall of a query population under one deployment:
+
+```{python}
+print(inspect.getsource(sim.fed_recall))
+```
+
+```{python}
+#| eval: false
+mu_main   = sim.mu_sweep(beta=0.6, n_anchor=100)   # ample calibration
+mu_scarce = sim.mu_sweep(beta=0.6, n_anchor=24)    # anchor < p = 32
+beta_tab  = sim.beta_sweep(n_anchor=100)           # Procrustes vs near-orthogonal vs LS
+```
 
 ```{python}
 import json
 from pathlib import Path
 
-import pandas as pd
-
 rec = json.loads(Path("_recorded/similarity_sweeps.json").read_text())
 ample, scarce = rec["mu_ample"], rec["mu_scarce"]
 beta_tab = pd.DataFrame(rec["beta_sweep"])
 
-pd.DataFrame(
-    {"mu": ample["mu_labels"], "design 1": ample["d1"],
-     "design 2": ample["d2"], "||AᵀA − I||": ample["aniso"]}
-).round(3)
+print(f"mu sweep (beta=0.6, anchor=100):  ideal={ample['ideal']:.3f} "
+      f"unaligned={ample['unaligned']:.3f} Gram={ample['gram']:.3f}")
+print(pd.DataFrame({"mu": ample["mu_labels"], "d1": ample["d1"],
+                    "d2": ample["d2"], "aniso": ample["aniso"]}).round(3).to_string(index=False))
+print("\nbeta sweep (anchor=100, common random numbers):")
+print(beta_tab[["beta", "least_squares", "near_orthogonal", "procrustes", "ideal"]]
+      .round(3).to_string(index=False))
+print("\nmu sweep at scarce anchor=24:")
+print(pd.DataFrame({"mu": scarce["mu_labels"], "d1": scarce["d1"],
+                    "d2": scarce["d2"]}).round(3).to_string(index=False))
 ```
+
+Three readings come out of the sweeps. **Fidelity** (β panel):
+at $\beta = 0$ the drift is isometric and Procrustes, the
+near-orthogonal map, and least squares all match the no-drift
+ideal; as the drift bends, Procrustes falls away while the
+relaxed adapters track the ideal — the richer map earns its keep
+exactly when fine-tuning is non-isometric. **Posture** (μ panel):
+Design 1 and Design 2 coincide at $\mu \to \infty$ (where the
+adapter is orthogonal and the per-vector norms are all one) and
+separate as $\mu$ shrinks, so the raw-database matvec is a valid
+cosine only near the orthogonal endpoint; the departure-from-
+isometry panel quantifies the budget. **Sweet spot** (scarce-
+anchor panel): when the calibration cohort is smaller than the
+embedding dimension, an intermediate $\mu$ regularizes the
+adapter and can beat both endpoints — a secondary effect that
+appears only under scarce calibration. The Gram-PSD reference
+sits near the unaligned floor: its rotation invariance loses the
+public-frame orientation, so it is the wrong tool for a
+public-query retrieval.
 
 ```{python}
 #| label: fig-sweeps
-#| fig-cap: "Adapter behavior across the family. Top left: recall against mu at fixed drift, both deployments, with the no-drift ideal, the no-adapter floor, and the convex Gram alternative. Top right: recall against drift magnitude for three members of the family. Bottom left: the same mu sweep when the calibration cohort is smaller than the embedding dimension. Bottom right: how far the fitted adapter departs from an isometry, which is the budget the raw-database deployment spends."
 #| fig-width: 9
 #| fig-height: 7
 import matplotlib.pyplot as plt
-import numpy as np
 
 x = np.arange(len(rec["mu_grid"]))
 k = rec["config"]["top_k"]
 fig, ax = plt.subplots(2, 2, figsize=(9, 7), constrained_layout=True)
 
-# (1) recall vs mu, both deployments, against the three reference lines
+# (1) recall vs mu: Design 1 vs Design 2, with Gram / ideal / floor
 a = ax[0, 0]
 a.plot(x, ample["d1"], "o-", color="black", label="Design 1 (fold)")
 a.plot(x, ample["d2"], "o--", color="firebrick", mfc="none",
@@ -353,121 +830,164 @@ a.axhline(ample["gram"], ls="-.", lw=2, color="orange", label="Gram-PSD")
 a.axhline(ample["ideal"], ls=":", color="darkgreen", label="ideal")
 a.axhline(ample["unaligned"], ls=":", color="gray", label="unaligned")
 a.set(xticks=x, xticklabels=rec["mu_grid"], ylim=(0, 1),
-      xlabel="μ  (0 = least squares  →  inf = Procrustes)",
+      xlabel="μ  (0 = LS    ->    inf = Procrustes)",
       ylabel=f"recall@{k}", title=f"Recall vs μ (β = {ample['beta']})")
-a.legend(loc="upper right", fontsize=7, frameon=False, ncols=2)
+a.legend(loc="right", fontsize=7, frameon=False)
 
-# (2) recall vs drift magnitude, three members of the family
+# (2) recall vs beta: Procrustes vs near-orthogonal vs LS
 a = ax[0, 1]
 a.plot(beta_tab["beta"], beta_tab["procrustes"], "o-", color="black",
        label="Procrustes (μ = inf)")
 a.plot(beta_tab["beta"], beta_tab["near_orthogonal"], "o--", color="blue",
-       mfc="none", label="near-orthogonal (μ = 1)")
+       mfc="none", label="near-orth (μ = 1)")
 a.plot(beta_tab["beta"], beta_tab["least_squares"], "^:", color="firebrick",
-       mfc="none", label="least squares (μ = 0)")
-# Drawn as a curve, not a horizontal line: the no-drift reference is
-# recomputed at each beta and moves a little with the draw, so
-# flattening it to one number would hide that.
+       mfc="none", label="LS (μ = 0)")
 a.plot(beta_tab["beta"], beta_tab["ideal"], ":", color="darkgreen",
        label="ideal")
 a.set(ylim=(0, 1), xlabel="β  (non-isometry)", ylabel=f"recall@{k}",
       title="Procrustes vs relaxed adapters")
 a.legend(loc="lower left", fontsize=7, frameon=False)
 
-# (3) the same sweep under scarce calibration: the sweet spot
+# (3) recall vs mu at scarce anchor (< p): the regularization sweet spot
 a = ax[1, 0]
 a.plot(x, scarce["d1"], "o-", color="black", label="Design 1 (fold)")
 a.plot(x, scarce["d2"], "o--", color="firebrick", mfc="none",
        label="Design 2 (matvec)")
 a.set(xticks=x, xticklabels=rec["mu_grid"], ylim=(0, 1), xlabel="μ",
-      ylabel=f"recall@{k}",
+      ylabel=f"recall@{k} (Design 1)",
       title=f"Scarce anchor (n = {scarce['n_anchor']} < p = {rec['config']['p']})")
 a.legend(loc="lower left", fontsize=7, frameon=False)
 
-# (4) departure from isometry: the cost Design 2 pays at finite mu
+# (4) departure from isometry vs mu (the Design-2 / matvec budget)
 a = ax[1, 1]
-a.semilogy(x, np.asarray(ample["aniso"]) + 1e-16, "o-", color="black")
+a.semilogy(x, np.asarray(ample["aniso"]) + 1e-12, "o-", color="black")
 a.set(xticks=x, xticklabels=rec["mu_grid"], xlabel="μ",
       ylabel=r"$\|A^\top A - I\|_F$", title="Departure from isometry")
 
 plt.show()
 ```
 
-Reproduce with:
+## Discussion
 
-```bash
-OMP_NUM_THREADS=2 uv run python docs/_recorded/record_similarity_sweeps.py
-```
+- **Federated retrieval across heterogeneous fine-tuned
+  models.** Each of $n$ sites holds its own privately
+  fine-tuned variant of a public foundation model; the
+  protocol returns the top-$k$ patients across all sites
+  whose private-model embeddings are most cosine-similar to a
+  public-model query. The master sees every candidate's score.
+- **Site-private compatibility adapter on the $\mu$ axis.** Each
+  site fits an adapter $A_k$ on a public anchor cohort along the
+  family $\min_A \lVert Z_{\text{priv}}A - Z_{\text{pub}}\rVert^2
+  + \mu\lVert A^\top A - I\rVert^2$ — orthogonal Procrustes at
+  $\mu\to\infty$, least squares at $\mu = 0$. The adapter never
+  leaves the site and never appears in the clear at the master.
+- **Two deployments, one axis.** The adapter is either applied
+  to the encrypted query (Design 2, the matvec) or folded into
+  the database offline (Design 1, a plain encrypted inner
+  product). The two coincide exactly at the orthogonal endpoint
+  (where every per-vector norm is one) and part company as $\mu$
+  relaxes; Design 1 then gives correct cosines while Design 2
+  does not. The matvec is thus the large-$\mu$ branch.
+- **Threshold key generation, $n$-of-$n$.** The CKKS secret
+  key is split across all sites. The master holds no usable
+  secret material. Any subset short of the full $n$ cannot
+  decrypt anything along the way.
+- **Diagonal-encoded matvec under threshold CKKS.** A
+  $p \times p$ matrix–vector multiply on an encrypted vector,
+  implemented as $p-1$ nontrivial rotations (the $i = 0$ diagonal
+  needs none), $p$ multiplications by unencrypted vectors, and
+  $p-1$ encrypted additions, all within
+  one level of the precision budget. The
+  joint rotation keys for the cyclic-slot rotations come
+  from an $n$-of-$n$ ceremony that mirrors the encryption-key
+  ceremony.
+- **Inner-product reduction via $\log p$ rotation-and-add.**
+  Slot-wise multiply by the site's own unencrypted database
+  vector followed by a halve-and-fold reduction places the
+  cosine similarity in slot 0.
+- **Encrypted scoring, cleartext ranking.** Each site's scores are
+  encrypted and only the $n$-of-$n$ ceremony can open them, so no
+  single party — the aggregator included — learns a score on its
+  own. Ranking, though, happens after decryption: the aggregator
+  threshold-decrypts **every** candidate score and sorts, so what it
+  ends up holding is each candidate's site, local index, label, and
+  score, not a top-$k$ release. See the Limitations below, which is
+  where encrypted top-$k$ would change this. The encrypted
+  protocol's scores agree with the same computation run unencrypted
+  to $\sim 10^{`{python} int(np.floor(np.log10(score_err)))`}$.
+- **Fidelity under non-isometric drift.** When fine-tuning is a
+  genuine non-isometry, the rigid orthogonal endpoint leaves
+  recall on the table while a relaxed (least-squares or
+  near-orthogonal) adapter tracks the no-drift ideal. At the
+  isometric special case the two coincide — that special case is
+  the orthogonal protocol of the earlier design.
 
-Three things fall out.
+## Limitations
 
-**Alignment is not optional.** Without an adapter, recall collapses to
-`{python} round(ample["unaligned"], 3)` against an achievable
-`{python} round(ample["ideal"], 3)` — the gray floor in the first
-panel. The geometric obstacle is the whole problem; the encryption is
-the easy part.
+- **Encrypted top-$k$ selection.**
+  We sort in the clear after threshold-decrypting the per-patient
+  scores, so the ceremony runs once per candidate and the aggregator
+  ends up holding, for *every* candidate at every site: the site
+  it came from, the local index, the label, and the score. That is
+  more than a top-$k$ release, and it is the honest description of
+  what this implementation discloses. Ranking under encryption
+  cannot be avoided by ordering the steps differently — without
+  encrypted comparison, nothing can know the global top-$k$ without
+  first learning enough scores to rank them. Encrypted argmax /
+  top-$k$ via polynomial sign approximation is feasible in CKKS but
+  adds depth and complexity orthogonal to this page's pedagogical
+  aim.
+- **Normalization, and what the $\mu$-knob trades.** The
+  near-isometry of the adapter controls the per-vector norms
+  $\lVert A_k^\top v\rVert$. At the orthogonal end they are all
+  one, which buys two things at once: the homomorphic
+  inverse-square-root (the depth-dominating Newton iteration of
+  @QuXu2023 and @Prantl2024DeBello) is
+  avoided, *and* every per-site score is a cosine in $[-1,1]$ on
+  the same scale across sites, so the raw-database matvec
+  (Design 2) is directly comparable. As $\mu$ relaxes for better
+  fidelity, those norms spread; the cure is to fold the adapter
+  into the database offline and unit-normalize there (Design 1),
+  which restores comparable cosines at the cost of materializing
+  public-compatible embeddings and re-folding them on a
+  public-model upgrade. So $\mu$ trades fidelity against the
+  raw-database-matvec posture, with offline folding as the
+  release valve — not a single forced choice.
+- **Slot-tiling for production scale.** The page runs at
+  $p = 32$ with one encrypted value per database vector.
+  Production at $p = 512$ would pack many database vectors into
+  the slots of a single encrypted value, amortizing the matvec
+  and inner-product cost across patients within a site.
+- **Real-model validation.** The synthetic data above drifts by
+  a parameterized non-isometric $B_k = Q_k D_k$, a controllable
+  stand-in for free fine-tuning. Real fine-tuned foundation
+  models (BiomedCLIP fine-tuned per site, PubMedBERT, etc.) drift
+  in ways no parameterized family captures exactly. Validating
+  the alignment on a real fine-tuned model is future work.
+- **Adaptive-query leakage.** Repeated adaptive queries by
+  the querier (or a coalition with the querier) leak
+  structural information about the cohort — the same
+  Hyrum-style observation that applies to any retrieval
+  system. We do not eliminate this leakage; we acknowledge
+  it as the cost of any released-function output.
+- **Malicious-secure threshold protocol.** The trust model
+  here is honest-but-curious. A malicious-secure variant
+  would require zero-knowledge proofs of correct partial
+  decryption and verifiable computation on the encrypted
+  scores; that is heavy machinery and out of scope.
 
-**The two deployments coincide only at the orthogonal endpoint.** At
-$\mu = \infty$ the two curves in the first panel meet, exactly as the
-algebra says they must: an orthogonal map preserves norms, so folding
-it into the database and applying it to the query are the same
-operation. At finite $\mu$ they separate, and folding wins — because
-the renormalization it performs repairs some of the distortion the
-non-orthogonal map introduces. The last panel is the budget being
-spent: $\lVert A^\top A - I\rVert_F$ falls to
-`{python} f"{ample['aniso'][-1]:.0e}"` at the endpoint and rises by
-orders of magnitude as $\mu$ relaxes.
+## Related work
 
-**An intermediate $\mu$ beats both endpoints.** The best point on the
-Design 1 curve is $\mu =$
-`{python} ample["mu_labels"][int(np.argmax(ample["d1"]))]` rather than
-either end. The rigid endpoint gives up recall it does not need to;
-unconstrained least squares distorts the geometry more than it repairs.
-Neither extreme is the right default, and the third panel shows the
-effect sharpening when the calibration cohort is smaller than the
-embedding dimension — there the intermediate $\mu$ is regularizing an
-adapter that least squares cannot determine.
+On the [Cox threshold](cox-threshold.qmd) and
+[Cox-lasso](cox-lasso.qmd) pages the aggregator sums the sites'
+encrypted contributions. Here an encrypted query goes to every site,
+each site scores it, and the aggregator threshold-decrypts the
+scores. The actor functions (`make_threshold_master`, `make_worker`,
+`Site.encrypt`, `ThresholdMaster.decrypt`) are the same.
 
-The second panel varies the drift itself. $\beta$ is the non-isometry
-magnitude: $\beta = 0$ is an exactly orthogonal fine-tune, and larger
-values stretch directions increasingly unevenly. At $\beta = 0$ the
-orthogonal adapter matches the ideal — it inverts an orthogonal drift
-perfectly, which is the sanity check that the machinery is right. As
-$\beta$ grows the rigid adapter falls away while the relaxed ones hold.
-That is the practical finding: **the more freely a site fine-tunes, the
-more the orthogonality constraint costs you**, and a deployment facing
-genuinely free fine-tuning should not default to Procrustes.
-
-The convex Gram alternative sits in the first panel for comparison. It
-is analytic and therefore attractive, and it lands at
-`{python} round(ample["gram"], 3)` — essentially the no-alignment
-floor. Its rotation invariance is exactly the problem: it discards the
-orientation of the public frame, which is the one thing a public query
-needs.
-
-## What this does not do
-
-**Top-$k$ selection happens in the clear.** The aggregator decrypts
-every candidate score and then sorts. Selecting the top $k$ *under*
-encryption is possible in CKKS via polynomial sign approximation, but
-it costs depth and complexity out of proportion to what it adds here.
-The consequence is that the aggregator learns every score, not only the
-$k$ it returns.
-
-**Patient indices travel in the clear** alongside the encrypted scores,
-so the aggregator learns which site holds a match and at which local
-position, though not who that patient is.
-
-**Repeated adaptive queries leak.** A querier who submits many chosen
-embeddings learns about the shape of the cohort. That is a property of
-any retrieval system that returns real answers, and encryption does not
-address it; query budgets do.
-
-**The trust model is honest-but-curious.** A site that misreports its
-scores can corrupt the ranking undetected. Catching that needs
-verifiable computation, which this does not attempt.
-
-**One encrypted value per patient.** At this scale that is fine. A
-production deployment would pack many patients into the slots of a
-single encrypted value and amortize both the adapter and the reduction
-across them.
+@Zhao2024FRAG federates encrypted vector search across mutually
+distrusting parties. @Mao2025FedE4RAG train retrievers by federated
+learning, with knowledge distillation between the server and client
+models and homomorphic encryption of the model parameters.
+@Yao2024PPER use homomorphic encryption for entity resolution across
+healthcare databases.

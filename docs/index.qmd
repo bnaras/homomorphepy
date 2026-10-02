@@ -1,6 +1,5 @@
 ---
 title: "homomorphepy"
-subtitle: "Multi-site privacy-preserving statistics over homomorphic encryption"
 ---
 
 ```{python}
@@ -13,305 +12,74 @@ import homomorphepy
 
 ![](logo.png){.float-end width="180" fig-alt="homomorphepy hex logo"}
 
-`homomorphepy` computes statistics across several parties without any
-of them revealing their data, using homomorphic encryption via
-[OpenFHE](https://openfhe.org).
+`homomorphepy` is privacy-preserving statistics across sites that never
+share their data. It uses fully homomorphic encryption through the
+`openfhe-python` binding of OpenFHE — CKKS for real-valued arithmetic,
+BFV and BGV for exact integers — with *n*-of-*n* threshold key
+generation so that no single party can decrypt. On top of these it
+ships master/worker primitives that let ordinary Python modeling code —
+`scipy.optimize.minimize()`, stratified Cox partial likelihoods from
+`statsmodels`, convex programs via `cvxpy` — run across sites.
 
 Version `{python} homomorphepy.__version__`, wrapping OpenFHE 1.5.1.
-
-## The problem this package addresses
-
-A recurring situation in biomedical research: several sites hold
-patient records that cannot leave the institutions that collected
-them, and one would like to fit a single model to the pooled data.
-
-It is well known that for many models fit to row-partitioned data this
-is easy to do. The log-likelihood, the score, and the information
-matrix are all *sums over observations*, so they are also sums over
-sites. An optimizer fitting such a model never needs an individual
-record — it needs the total of the per-site contributions at whatever
-parameter value it is currently considering. If the sites can compute
-that total without revealing their individual contributions, the fit
-proceeds exactly as it would on pooled data.
-
-Homomorphic encryption is what makes the total computable. It is a
-form of encryption under which certain arithmetic still works: you can
-add two encrypted numbers and get an encryption of their sum, without
-decrypting either one. The party doing the adding learns nothing.
-Under threshold keys the decryption key is also split across the
-sites, so no single party can decrypt anything alone.
-
-`homomorphepy` supplies the coordination layer — the sites, the
-aggregator, and the protocol connecting them — on top of the
-encryption provided by OpenFHE.
-
-The point worth keeping in view is that **the statistical machinery
-does not change**. The examples here fit Cox models with statsmodels'
-partial likelihood and `scipy.optimize.minimize`, and penalized
-regression with cvxpy, all unmodified. Only the function that returns
-the summary at each iteration is different.
-
-## Terms you will meet
-
-<!-- lint-vocabulary: off -->
-<!-- Naming each cryptographic term once is the point of this
-     section; the rest of the documentation avoids them. -->
-
-Encryption brings its own vocabulary, and a few of those words show up
-in function names. None of them need a cryptography background. Where
-a word has a standard cryptographic name you would meet elsewhere, it
-appears in parentheses once and is then set aside.
-
-- **Encrypted value** (*ciphertext*). What you get after encrypting a
-  number or a vector of numbers. These can be added and multiplied
-  without being decrypted first; `Ct` wraps one so that `+` and `*`
-  work on it directly.
-- **Cleartext value** (*plaintext*). The ordinary, unencrypted number
-  — what you started with and what decryption returns. The same word
-  also names the *encoded* intermediate the codec produces just before
-  encryption, which is why `packed_codec` talks about encoding.
-- **Slot.** An encrypted value is a vector with a fixed number of
-  positions, usually thousands. One arithmetic operation acts on every
-  slot at once, which is what makes encrypted vector arithmetic
-  affordable. You typically use the first few and ignore the rest.
-- **Site.** A party holding data that will not leave it. Sites never
-  share data and never see each other's contributions. A site is given
-  the public parameters once, when it is wired, and from then on it
-  computes *and encrypts* on its own — so what leaves a site is
-  already encrypted.
-- **Aggregator.** The party that collects encrypted per-site
-  contributions, adds them while they stay encrypted, and obtains the
-  total. In the API this object is called a `Master`.
-- **Public and secret key.** The usual pair: encrypt with the public
-  key, decrypt with the secret one. *Who holds the secret key* is the
-  central design question in these protocols.
-- **Evaluation keys.** Extra keys that *authorize* particular
-  operations — multiplying two encrypted values, summing across slots,
-  rotating a vector. They permit computation, not decryption.
-- **Threshold keys.** An arrangement where no single party holds the
-  secret key: each holds a share, and decryption needs all of them. No
-  subset can decrypt anything.
-- **Precision budget** (*multiplicative depth*). Real-valued encrypted
-  arithmetic is approximate, and every multiplication spends part of a
-  budget fixed when the parameters are chosen. Additions are
-  essentially free. [Precision](precision.qmd) covers what this means
-  in practice.
-- **Scheme.** The encryption construction in use. **CKKS** handles
-  real numbers approximately and is what most examples use, since
-  statistical quantities are real-valued. **BFV** handles integers
-  exactly, for counts where no approximation is acceptable.
-
-That is the whole vocabulary. The examples that follow use only these
-terms.
-
-<!-- lint-vocabulary: on -->
-
-## The shortest complete example
-
-Three sites, each holding a private count, and an aggregator that
-learns only the total:
-
-```{python}
-from homomorphepy import fhe_context, packed_codec, Ct
-
-cc = fhe_context("BFV", plaintext_modulus=65537, multiplicative_depth=1)
-keys = cc.KeyGen()
-codec = packed_codec(cc)
-
-private_counts = [46, 15, 52]          # each known only to its own site
-
-cts = [Ct(cc.Encrypt(keys.publicKey, codec.encode(n)), cc.cc)
-       for n in private_counts]
-
-total = codec.decode(cc.Decrypt(sum(cts).raw, keys.secretKey), 1)[0]
-total
-```
-
-The aggregator added encrypted values it could not read, and decrypted
-only the sum. BFV is exact integer arithmetic, so the answer is the integer
-and not an approximation of it. Everything else here is this idea with
-more statistics on top.
-
-## How the pieces fit together
-
-Three objects are the building blocks for the protocol.
-
-A **site** is built with `make_worker()`. It holds the site's data and
-a function `local_fn(data, theta)` returning that site's summary at the
-parameter value `theta`. If a parameter value breaks the computation —
-an extreme value that the site's solver cannot handle — the function
-returns `None`, and that signal propagates back to the optimizer
-rather than corrupting the fit.
-
-The aggregator reaches every site through one method,
-`site.contribute(theta)`, and what comes back is **already
-encrypted**: the site encrypts with the public parameters it received
-at setup, so no individual site's cleartext contribution ever reaches
-the aggregator. That is why `local_fn` returns a plain number while
-`contribute()` — not you — does the encrypting.
-
-When the records are not in this process, subclass `RemoteSite` and
-give it a `contribute()` method. The package ships no implementation:
-transports differ too much, and a cryptography package has no
-business carrying an HTTP client. The extension is small:
-
-```{python}
-from homomorphepy import RemoteSite
-
-
-class HttpSite(RemoteSite):
-    def __init__(self, name, url):
-        super().__init__(name, None, None)
-        self.url = url
-
-    def contribute(self, theta):
-        # The far side holds the public parameters and encrypts before
-        # replying, so the wire carries encrypted values -- never a
-        # bare number.
-        return fetch_encrypted_contribution(self.url, theta)
-```
-
-`None` and a failure to answer have to be handled differently. In
-these examples `None` means *this* `theta` broke the site's solver, and
-because the examples involve optimization, the optimizer responds by
-trying a different parameter. A network or timeout failure is not
-that, and backing off to another `theta` does nothing about it — raise
-`SiteUnavailable` instead, which aborts the round.
-
-An **aggregator** is built with either `make_ckks_master()` or
-`make_threshold_master()`. The two differ in exactly one respect, and
-it is the respect that matters:
-
-- `make_ckks_master()` creates an aggregator holding an ordinary key
-  pair. It is appropriate when one party is permitted to hold the
-  secret key.
-- `make_threshold_master()` takes the sites and runs threshold key
-  generation through them: each site generates its own share and
-  keeps it, so no single party — including the aggregator itself — can
-  decrypt alone. The aggregator it returns holds only public material,
-  and is already wired to those sites.
-
-Because both are the same kind of object underneath, the protocol body
-is identical for either. Choosing a trust model means choosing a
-constructor, not rewriting the analysis. The one setup difference
-follows from the cryptography rather than the API: a joint public key
-is built *from* the sites, so under threshold keys the sites are
-created first and handed to the constructor, instead of being wired to
-an aggregator afterwards with `set_workers()`.
-
-**`master.aggregate(theta)`** runs one round. The aggregator sends
-`theta` to every site; each site computes its local summary and
-encrypts it; the aggregator adds the encrypted summaries together and
-decrypts only the total. An optimizer calls this once per iteration,
-and the fit proceeds.
-
-The topology is a flat fan-out and fan-in, which is how federated
-analysis frameworks such as distcomp
-[@NarasimhanRubinGrossBenderskyLavori2017; @distcomp] and DataSHIELD
-[@WolfsonDataSHIELD2010; @GayeDataSHIELD2014] are actually deployed.
-
-### Sites that are not in this process
-
-Every example here runs all parties inside one Python process, so that
-each is reproducible by running it. That is a simulation of the
-deployment, not the deployment itself, and it is worth being explicit
-about what changes when the sites are genuinely remote.
-
-The structure does not change. You subclass `RemoteSite` and give it
-whatever your transport needs — an endpoint, a credential, a
-connection object. The object you hold in the aggregator's process is
-a *local handle* for a remote party, not the party itself. Nothing in
-`aggregate()` needs to know the difference.
-
-Two methods correspond to the only two moments anything passes between
-the parties:
-
-- `set_public_params(params)` — setup. Send the public context and
-  key to the endpoint and have it keep them. Only public material
-  travels.
-- `contribute(theta)` — one round. Send `theta`, and get back a value
-  the far end has **already encrypted**.
-
-The ordering in the second one is the whole point: the summary is
-encrypted before it leaves the site, so no individual contribution
-ever exists in the clear outside the site that produced it. Under
-threshold keys two more methods run at the far end, so that the share
-never leaves it: `keygen_round()` during key generation, and
-`partial_decrypt()` at each decryption.
-
-What the package does not supply is everything else a deployment
-needs: transport, authentication, key storage at the endpoint, retry
-and timeout policy, and any defense against a party that actively
-deviates rather than merely observes. The `RemoteSite` docstring states
-the full contract.
-
-## What "the right answer" means
-
-[Precision](precision.qmd) is the companion to this page. It sets out
-what it means for an encrypted result to be correct: exact for integer
-counting, and approximate within a measurable bound for real-valued
-arithmetic. Read it before interpreting any number in the examples
-below.
-
-## Examples
-
-Grouped by what you are trying to do. Within each group, the simpler
-example comes first.
-
-**Queries and aggregation.** Counting across sites without revealing
-who contributed what. The simplest complete protocols here, and the
-best place to begin. The Observational Health Data Sciences and
-Informatics (OHDSI) network [@HripcsakOHDSI2015] would be a platform
-for such queries.
-
-| Example | What it shows |
-|---|---|
-| [Aggregation](aggregation.qmd) | Encrypted counting. The simplest composition, and exact under BFV. |
-| [Query counting](query-count.qmd) | The same count under threshold keys, where nobody can decrypt alone. |
-
-**Fitting models across sites.** Each of these drives an ordinary,
-unmodified fitting routine. The DataSHIELD network
-[@WolfsonDataSHIELD2010; @GayeDataSHIELD2014] and the distcomp package
-[@NarasimhanRubinGrossBenderskyLavori2017; @distcomp] may be platforms
-for such model fitting.
-
-| Example | What it shows |
-|---|---|
-| [Maximum likelihood](mle.qmd) | An unmodified optimizer driving an encrypted objective. |
-| [Cox regression](cox.qmd) | Survival analysis across three hospitals, over a master/worker protocol. |
-| [Cox with threshold keys](cox-threshold.qmd) | The same fit again, with no party able to decrypt alone. |
-| [Cox-lasso](cox-lasso.qmd) | The full pipeline on gene expression: encrypted standardization, screening, and a penalized fit by consensus ADMM. |
-
-**Prediction.** Two parties, one holding a model and one holding data,
-neither willing to reveal theirs.
-
-| Example | What it shows |
-|---|---|
-| [Secure inference](secure-inference.qmd) | A lab scoring patients it cannot see — and the attack this does *not* prevent. |
-| [Encrypted logistic prediction](encrypted-regression.qmd) | The same, with a sigmoid — a non-polynomial function evaluated without decrypting. |
-| [Federated similarity search](similarity.qmd) | Retrieval across sites whose models disagree, under threshold keys and joint rotation keys. |
-
-**Adding Gaussian noise.** A demonstration of what it costs, not a
-privacy guarantee or a recommendation to do it. The same mechanism is
-applied to two protocols, and the costs differ.
-
-| Example | What it shows |
-|---|---|
-| [Cox with Gaussian noise](dp.qmd) | Noise on a scalar objective, and the optimizer that stops working. |
-| [Consensus ADMM with Gaussian noise](consensus-admm-dp.qmd) | Noise on the consensus average, with $\rho$ and the iteration count chosen without the data. |
-
-## Installing
-
-The statistical layer installs normally. The crypto backend does not:
+Install it by
 
 ```bash
-pip install homomorphepy          # examples, fixtures, DP accounting
+pip install homomorphepy
+```
+
+The `cox` and `cox-lasso` pages also use `statsmodels` and `cvxpy`,
+which are optional rather than required:
+
+```bash
+pip install "homomorphepy[stats]"
 ```
 
 `openfhe` is an **optional** dependency because its published wheels
 are tagged `py3-none-any` while containing Linux/CPython-3.12
 binaries — `pip install` reports success on macOS and the import then
 fails. See the README for the working paths.
+
+The pages build up from a gentle introduction to complete
+distributed protocols:
+
+**Getting started**
+
+- [`introduction`](introduction.qmd) — a quick tour of homomorphic
+  computation in Python.
+- [`precision`](precision.qmd) — which encrypted computations are
+  exact and which are approximate.
+- [`aggregation`](aggregation.qmd) — exact integer aggregation under BFV.
+- [`query-count`](query-count.qmd) — a count across sites under
+  threshold keys.
+- [`mle`](mle.qmd) — homomorphic maximum-likelihood estimation for a
+  Poisson parameter.
+
+**Distributed statistical modeling under FHE**
+
+- [`cox`](cox.qmd) — stratified Cox regression distributed across
+  sites under CKKS.
+- [`cox-threshold`](cox-threshold.qmd) — the same fit under
+  *n*-of-*n* threshold key generation, so no single party can decrypt.
+- [`cox-lasso`](cox-lasso.qmd) — a Cox-lasso fit by consensus ADMM,
+  with `cvxpy` at each site, under threshold FHE on the DLBCL
+  gene-expression data.
+- [`secure-inference`](secure-inference.qmd) — two-party encrypted
+  prediction.
+- [`encrypted-regression`](encrypted-regression.qmd) — logistic
+  regression on encrypted data via a Chebyshev sigmoid approximation.
+- [`similarity`](similarity.qmd) — federated cosine-similarity
+  retrieval with site-private fine-tuned models.
+
+**Gaussian-noise variants**
+
+- [`dp`](dp.qmd), [`consensus-admm-dp`](consensus-admm-dp.qmd) — the
+  threshold-FHE protocols above with site-side Gaussian noise.
+  Demonstrations, not a privacy guarantee.
+
+## Source
+
+The code is on [GitHub](https://github.com/bnaras/homomorphepy).
 
 ```{python}
 #| echo: false
@@ -320,7 +88,7 @@ have = homomorphepy.have_backend()
 Markdown(
     f"**This page was rendered with the crypto backend "
     f"{'available' if have else 'absent'}.** "
-    + ("Every number below was computed through real encryption."
+    + ("Every number on these pages was computed through real encryption."
        if have else
        "Pages needing encryption will show their shipped results instead.")
 )

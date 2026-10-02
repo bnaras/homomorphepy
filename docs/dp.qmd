@@ -1,6 +1,5 @@
 ---
-title: "Cox regression with Gaussian noise"
-subtitle: "A demonstration"
+title: "Threshold Cox with Gaussian Noise (Demonstration)"
 ---
 
 ```{python}
@@ -12,8 +11,8 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 
 ## Introduction
 
-This page is a demonstration. The previous page, [Cox with threshold
-keys](cox-threshold.qmd), fits the Cox model under threshold FHE: the
+This page is a demonstration. The previous page, the [Cox threshold
+page](cox-threshold.qmd), fits the Cox model under threshold FHE: the
 fit matches the cleartext fit, no single party can decrypt, and the
 aggregator sees only the joint log-likelihood $\ell(\beta)$ at each
 optimizer query.
@@ -21,64 +20,83 @@ optimizer query.
 Here we ask what happens if each site also adds Gaussian noise of the
 kind an *output differential privacy* mechanism uses. The sensitivity
 $\Delta = 1$ below is a placeholder, so the $\varepsilon$ values are
-not a privacy guarantee. Adding the
-noise takes one extra `rng.normal()` call per site per query. With the
-optimizers used here, the fits are poor at any noise level that gives
-a small $\varepsilon$. The page runs the fits and reports the numbers.
+not a privacy guarantee. Adding the noise takes one extra
+`rng.normal()` call per site per query. With the optimizers used here,
+the fits are poor at any noise level that gives a small
+$\varepsilon$. The page runs the fits and reports the numbers.
 
 ## A brief output-DP primer
 
-Given a query $f$ on a dataset $D$, the *Gaussian mechanism*
-[@DworkRoth2014, §3.5.3] releases
+Given a query $f: \mathcal{D} \to \mathbb{R}$ on a dataset $D$,
+the *Gaussian mechanism* [@DworkRoth2014, §3.5.3] releases
 $\tilde f(D) = f(D) + \mathcal{N}(0, \sigma^2)$. If $f$'s
-*sensitivity* (the largest change $f$ can undergo when one record is
-added or removed) is $\Delta$, then for any
+*sensitivity* (the largest change $f$ can undergo when one record
+is added or removed) is $\Delta$, then for any
 $\varepsilon \in (0, 1)$ and $\delta > 0$, choosing
 $\sigma \geq \Delta \sqrt{2\ln(1.25/\delta)}/\varepsilon$ makes a
 single release of $\tilde f$ satisfy $(\varepsilon, \delta)$
 differential privacy.
 
-The optimizer issues many queries, so the per-query budget composes.
-We use *zCDP composition* [@BunSteinke2016]: the Gaussian mechanism is
-$\rho$-zCDP with $\rho = (\Delta/\sigma)^2/2$; $T$ queries compose to
-$T\rho$; and that converts to $(\varepsilon, \delta)$ via
+The optimizer issues many queries, so the per-query budget
+composes. We use *zCDP composition* [@BunSteinke2016]:
+the Gaussian mechanism is $\rho$-zCDP with $\rho = (\Delta/\sigma)^2/2$;
+$T$ queries compose linearly to $T \cdot \rho$ in zCDP units; and
+that converts to $(\varepsilon, \delta)$ via
 $\varepsilon = \rho + 2\sqrt{\rho \log(1/\delta)}$.
-
-```{python}
-import math
-
-def zcdp_to_epsilon(rho, delta=1e-5):
-    return rho + 2 * math.sqrt(rho * math.log(1 / delta))
-
-def budget(n_queries, sigma, delta=1e-5, sensitivity=1.0):
-    rho_q = (sensitivity / sigma) ** 2 / 2
-    rho_total = n_queries * rho_q
-    return rho_q, rho_total, zcdp_to_epsilon(rho_total, delta)
-```
 
 ## The protocol
 
-The setup is the same as in [Cox with threshold
-keys](cox-threshold.qmd), except that each of the $N$ sites adds
-$\mathcal{N}(0, \sigma^2/N)$ to its local negative log-likelihood
-before encrypting it. Since variances of independent normals add, the
-decrypted total is $\ell(\beta) + \mathcal{N}(0, \sigma^2)$.
+The setup is identical to the [Cox threshold page](cox-threshold.qmd),
+except each site adds an independent Gaussian noise term to its local
+contribution before encryption. Since variances of independent
+normals add, the decrypted total is
+$\ell(\beta) + \mathcal{N}(0, \sigma^2)$ when each site adds
+$\mathcal{N}(0, \sigma^2/N)$.
+
+## The Cox setup (same DLBCL data as the other Cox pages)
 
 ```{python}
 import numpy as np
-from homomorphepy.examples.cox import local_cox_nll
+from homomorphepy import load_dlbcl, site_order
+from statsmodels.duration.hazard_regression import PHReg
 
-def make_noisy_local(sigma, n_sites, rng):
-    """Wrap a site's local function with its share of the DP noise."""
-    scale = sigma / np.sqrt(n_sites)
+df = load_dlbcl()
+COVARIATES = ["GCB_sig", "LN_sig", "Prolif_sig", "BMP6", "MHC2_sig"]
 
-    def noisy_local(data, beta):
-        value = local_cox_nll(data, beta)
-        if value is None or np.isnan(value):
-            return np.nan
-        return value + (rng.normal(0.0, scale) if sigma > 0 else 0.0)
+def site_frame(name):
+    m = (df["Subgroup"] == name).to_numpy()
+    return {
+        "time":   df["time"].to_numpy(dtype=float)[m],
+        "status": df["status"].to_numpy(dtype=int)[m],
+        "X":      np.column_stack([df[c].to_numpy(dtype=float)[m]
+                                   for c in COVARIATES]),
+    }
 
-    return noisy_local
+cox_data = {name: site_frame(name) for name in site_order()}
+
+agg_model = PHReg(df["time"], df[COVARIATES], status=df["status"],
+                  strata=df["Subgroup"].cat.codes, ties="efron")
+agg_coef  = np.asarray(agg_model.fit().params, dtype=float)
+
+def local_cox_nll(data, beta):
+    b = np.asarray(beta, dtype=float).ravel()
+    model = PHReg(data["time"], data["X"],
+                  status=data["status"], ties="efron")
+    return float(-model.loglike(b))
+```
+
+## Threshold setup and DP-noised workers
+
+The threshold setup is also the same as on the Cox threshold page.
+The only change is in each worker's local function: it adds an
+independent $\mathcal{N}(0, \sigma^2/N)$ draw to its local nLL before
+returning it. The noisy value is then encrypted as usual.
+
+```{python}
+import inspect
+from homomorphepy.examples import dp
+
+print(inspect.getsource(dp.fit_at_sigma))
 ```
 
 Each fit is a full optimizer run through the encrypted channel, so
@@ -91,12 +109,11 @@ OMP_NUM_THREADS=2 uv run python docs/_recorded/record_dp_sweep.py
 ```{python}
 #| echo: false
 import json
+import math
 from pathlib import Path
 
 import pandas as pd
 from IPython.display import Markdown
-
-from homomorphepy.examples import dp
 
 rec = json.loads(Path("_recorded/dp_sweep.json").read_text())
 rows = pd.DataFrame(rec["rows"])
@@ -137,8 +154,9 @@ minutes.
 
 ## Mechanical correctness: $\sigma = 0$ reproduces the threshold fit
 
-When the noise is zero the protocol reduces to the lossless threshold
-protocol.
+When the noise is zero the protocol reduces to the lossless
+threshold protocol. The fitted coefficients match the centralized fit
+to threshold-CKKS precision.
 
 ```{python}
 #| echo: false
@@ -168,9 +186,8 @@ gradient by finite differences of these nLL values.
 sweep_table("BFGS")
 ```
 
-Unlike R's `optim()`, SciPy's BFGS does not move from the zero
-starting point at any $\sigma > 0$, so this table is not comparable
-with the R results.
+BFGS does not move from the zero starting point at any $\sigma > 0$;
+the rows show the starting values.
 
 ## Nelder–Mead at the same noise scales
 
@@ -189,30 +206,39 @@ Fidelity decays as $\sigma$ grows.
 
 ## Privacy budget
 
-For the fits at the first three values of $\sigma$, with sensitivity
-$\Delta = 1$ (placeholder) and target $\delta = 10^{-5}$, zCDP
-composition gives:
+For the fits at the first three values of $\sigma$, with
+sensitivity $\Delta = 1$ (placeholder) and target
+$\delta = 10^{-5}$, zCDP composition gives:
+
+```{python}
+def zcdp_to_eps(rho, delta=1e-5):
+    return rho + 2 * np.sqrt(rho * np.log(1 / delta))
+
+first_three = sorted(s for s in rows["sigma"].unique() if s > 0)[:3]
+budget = pd.concat([
+    rows[(rows["method"] == m) & rows["sigma"].isin(first_three)][["method", "sigma", "n_queries"]]
+    for m in ("BFGS", "Nelder-Mead")])
+budget["rho_per_query"] = (1 / budget["sigma"]) ** 2 / 2
+budget["rho_total"]     = budget["n_queries"] * budget["rho_per_query"]
+budget["epsilon_at_delta_1e_minus_5"] = zcdp_to_eps(budget["rho_total"])
+```
 
 ```{python}
 #| echo: false
-first_three = sorted(s for s in rows["sigma"].unique() if s > 0)[:3]
-body = []
-for method in ("BFGS", "Nelder-Mead"):
-    for r in rows[(rows["method"] == method) & rows["sigma"].isin(first_three)].itertuples():
-        rho_q, rho_total, eps = budget(r.n_queries, r.sigma)
-        body.append(["Nelder–Mead" if method == "Nelder-Mead" else method,
-                     pow10(r.sigma), str(r.n_queries), sci(rho_q), sci(rho_total), sci(eps)])
 md_table(
     ["Optimizer", "$\\sigma$", "Queries $k$", "$\\rho$ per query",
      "$\\rho_{\\text{total}} = k\\rho$", "$\\varepsilon$ at $\\delta = 10^{-5}$"],
-    body,
+    [["Nelder–Mead" if r.method == "Nelder-Mead" else r.method,
+      pow10(r.sigma), str(r.n_queries), sci(r.rho_per_query), sci(r.rho_total),
+      sci(r.epsilon_at_delta_1e_minus_5)]
+     for r in budget.itertuples()],
     "zCDP composition; sensitivity $\\Delta = 1$, target $\\delta = 10^{-5}$",
 )
 ```
 
-The $\varepsilon$ column shows that at noise levels where the fits are
-still close, $\varepsilon$ is large. Whether that is acceptable depends
-on the application.
+The $\varepsilon$ column shows that at noise
+levels where the fits are still close, $\varepsilon$ is large.
+Whether that is acceptable depends on the application.
 
-One could also explore a tighter sensitivity bound $\Delta$ or allow
-far fewer queries, etc. We don't do that here.
+One could also explore tighter sensitivity bound $\Delta$ or allow far
+fewer queries, etc. We don't do that here.
