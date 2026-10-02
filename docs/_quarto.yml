@@ -5,6 +5,7 @@ project:
 website:
   title: "homomorphepy"
   description: "Multi-site privacy-preserving statistics over homomorphic encryption"
+  site-url: https://bnaras.github.io/homomorphepy
   favicon: logo_240.png
   navbar:
     logo: logo_240.png

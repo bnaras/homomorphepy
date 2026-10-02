@@ -23,6 +23,11 @@ dependencies = [
     "scipy>=1.11",
 ]
 
+[project.urls]
+Homepage = "https://bnaras.github.io/homomorphepy"
+Documentation = "https://bnaras.github.io/homomorphepy"
+Source = "https://github.com/bnaras/homomorphepy"
+
 [project.optional-dependencies]
 # NOT a hard dependency, deliberately. The PyPI `openfhe` wheels are
 # tagged py3-none-any but contain cpython-312-x86_64-linux-gnu binaries

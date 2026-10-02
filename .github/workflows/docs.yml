@@ -1,0 +1,55 @@
+name: Docs
+
+# Renders the Quarto site and pushes it to the gh-pages branch, which
+# GitHub Pages serves at https://bnaras.github.io/homomorphepy.
+# Every page executes during the render, so the job needs the same
+# platform the openfhe wheel supports: Ubuntu 24.04, CPython 3.12.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    # The pages run live protocols; the two recorded runs under
+    # docs/_recorded/ are read from JSON, the rest compute on the runner.
+    timeout-minutes: 120
+    env:
+      OMP_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.12"
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: "1.10.18"
+
+      - name: Install
+        run: uv sync --locked --extra openfhe --extra stats
+
+      - name: Check openfhe imports
+        run: uv run --no-sync python -c "import openfhe"
+
+      - name: Render
+        working-directory: docs
+        run: uv run --no-sync quarto render
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/_site
+          publish_branch: gh-pages
+          force_orphan: true
