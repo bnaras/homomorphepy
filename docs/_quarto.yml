@@ -36,6 +36,10 @@ website:
           - consensus-admm-dp.qmd
       - href: precision.qmd
         text: Precision
+    right:
+      - icon: github
+        href: https://github.com/bnaras/homomorphepy
+        aria-label: GitHub
 
 bibliography: references.bib
 
