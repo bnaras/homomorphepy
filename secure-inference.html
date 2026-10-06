@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Secure Model Inference on Encrypted Data – homomorphepy</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js" integrity="sha384-ZvpUoO/+PpLXR1lu4jmpXWu80pZlYUAfxl5NsBMWOEPSjUn/6Z/hRTt8+pR6L4N2" crossorigin="anonymous"></script><script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<link href="./logo_240.png" rel="icon" type="image/png">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-55617497126496852ff9f5a59253c640.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+<script src="https://cdn.jsdelivr.net/npm/requirejs@2.3.6/require.min.js" integrity="sha384-c9c+LnTbwQ3aujuU7ULEPVvgLs+Fn6fJUvIGTsuu1ZcCf11fiEubah0ttpca4ntM sha384-6V1/AdqZRWk1KAlWbKBlGhN7VG4iE/yAZcO6NZPMF8od0vukrvr0tg4qY6NSrItx" crossorigin="anonymous"></script>
+
+<script type="application/javascript">define('jquery', [],function() {return window.jQuery;})</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="nav-fixed quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a href="./index.html" class="navbar-brand navbar-brand-logo">
+    <img src="./logo_240.png" alt="homomorphepy hex logo" class="navbar-logo light-content">
+    <img src="./logo_240.png" alt="homomorphepy hex logo" class="navbar-logo dark-content">
+    </a>
+    <a class="navbar-brand" href="./index.html">
+    <span class="navbar-title">homomorphepy</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="./index.html"> 
+<span class="menu-text">Home</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="./introduction.html"> 
+<span class="menu-text">Introduction</span></a>
+  </li>  
+  <li class="nav-item dropdown ">
+    <a class="nav-link dropdown-toggle" href="#" id="nav-menu-examples" role="link" data-bs-toggle="dropdown" aria-expanded="false">
+ <span class="menu-text">Examples</span>
+    </a>
+    <ul class="dropdown-menu" aria-labelledby="nav-menu-examples">    
+        <li>
+    <a class="dropdown-item" href="./aggregation.html">
+ <span class="dropdown-text">Privacy-Preserving Count Aggregation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./query-count.html">
+ <span class="dropdown-text">Distributed Query Count with Threshold Keys</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./mle.html">
+ <span class="dropdown-text">Distributed Maximum Likelihood Estimation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox.html">
+ <span class="dropdown-text">Distributed Stratified Cox Regression</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox-threshold.html">
+ <span class="dropdown-text">Distributed Cox Regression with Threshold Key Generation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox-lasso.html">
+ <span class="dropdown-text">Federated Cox-Lasso via Consensus ADMM on DLBCL</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./secure-inference.html">
+ <span class="dropdown-text">Secure Model Inference on Encrypted Data</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./encrypted-regression.html">
+ <span class="dropdown-text">Encrypted Logistic Regression Prediction</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./similarity.html">
+ <span class="dropdown-text">Federated Cosine Similarity with Site-Private Fine-Tuned Models</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./dp.html">
+ <span class="dropdown-text">Threshold Cox with Gaussian Noise (Demonstration)</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./consensus-admm-dp.html">
+ <span class="dropdown-text">Consensus ADMM with Gaussian Noise (Demonstration)</span></a>
+  </li>  
+    </ul>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="./precision.html"> 
+<span class="menu-text">Precision</span></a>
+  </li>  
+</ul>
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/bnaras/homomorphepy"> <i class="bi bi-github" role="img" aria-label="GitHub">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#the-use-case" id="toc-the-use-case" class="nav-link active" data-scroll-target="#the-use-case">The use case</a></li>
+  <li><a href="#scenario-weighted-biomarker-score" id="toc-scenario-weighted-biomarker-score" class="nav-link" data-scroll-target="#scenario-weighted-biomarker-score">Scenario: weighted biomarker score</a></li>
+  <li><a href="#setup-hospitals-context-and-patient-data" id="toc-setup-hospitals-context-and-patient-data" class="nav-link" data-scroll-target="#setup-hospitals-context-and-patient-data">Setup: hospital’s context and patient data</a></li>
+  <li><a href="#lab-side-apply-the-model-to-encrypted-data" id="toc-lab-side-apply-the-model-to-encrypted-data" class="nav-link" data-scroll-target="#lab-side-apply-the-model-to-encrypted-data">Lab side: apply the model to encrypted data</a></li>
+  <li><a href="#hospital-side-decrypt-the-results" id="toc-hospital-side-decrypt-the-results" class="nav-link" data-scroll-target="#hospital-side-decrypt-the-results">Hospital side: decrypt the results</a></li>
+  <li><a href="#verification" id="toc-verification" class="nav-link" data-scroll-target="#verification">Verification</a></li>
+  <li><a href="#the-same-run-in-one-call" id="toc-the-same-run-in-one-call" class="nav-link" data-scroll-target="#the-same-run-in-one-call">The same run, in one call</a></li>
+  <li><a href="#transport-guarantees" id="toc-transport-guarantees" class="nav-link" data-scroll-target="#transport-guarantees">Transport guarantees</a></li>
+  <li><a href="#threat-model-model-extraction-from-the-hospital-side" id="toc-threat-model-model-extraction-from-the-hospital-side" class="nav-link" data-scroll-target="#threat-model-model-extraction-from-the-hospital-side">Threat model: model extraction from the hospital side</a></li>
+  <li><a href="#layered-defenses" id="toc-layered-defenses" class="nav-link" data-scroll-target="#layered-defenses">Layered defenses</a></li>
+  <li><a href="#network-protocol-serialization" id="toc-network-protocol-serialization" class="nav-link" data-scroll-target="#network-protocol-serialization">Network protocol: serialization</a></li>
+  </ul>
+<div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="secure-inference.ipynb" download="secure-inference.ipynb"><i class="bi bi-journal-code"></i>Jupyter</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Secure Model Inference on Encrypted Data</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="the-use-case" class="level2">
+<h2 class="anchored" data-anchor-id="the-use-case">The use case</h2>
+<p>A diagnostic lab develops a proprietary scoring model for disease risk based on a panel of biomarkers. A hospital wants to score its patients but cannot send raw patient data to the lab in cleartext. The lab does not want to send its model coefficients to the hospital in cleartext either.</p>
+<p>With FHE the hospital encrypts patient biomarkers, sends the encrypted values to the lab, the lab applies its weighted-sum scoring to them while they stay encrypted, and the hospital decrypts the scores. The biomarker values never appear in cleartext on the lab’s machine, and the lab’s coefficients are never sent to the hospital. These are the <em>transport</em> guarantees and they are what the pipeline below illustrates. They are not the whole story of deploying a model-as-a-service — see <em>Threat model: model extraction from the hospital side</em> below.</p>
+<p>This is the two-party companion to the multi-site master/worker pattern (<a href="./mle.html">MLE</a>, <a href="./cox.html">Cox</a>). Unlike those, there is no aggregator and no consensus: one client (hospital) holds the secret key and queries one server (lab) which holds the model coefficients in cleartext. The homomorphic primitives all come from the <code>openfhe-python</code> binding.</p>
+</section>
+<section id="scenario-weighted-biomarker-score" class="level2">
+<h2 class="anchored" data-anchor-id="scenario-weighted-biomarker-score">Scenario: weighted biomarker score</h2>
+<p>The lab’s model computes a weighted score:</p>
+<p><span class="math display">\[\text{score} = w_1 x_1 + w_2 x_2 + w_3 x_3 + w_4 x_4 + b\]</span></p>
+<p>where <span class="math inline">\(x_i\)</span> are biomarker values and <span class="math inline">\(w_i, b\)</span> are proprietary coefficients.</p>
+</section>
+<section id="setup-hospitals-context-and-patient-data" class="level2">
+<h2 class="anchored" data-anchor-id="setup-hospitals-context-and-patient-data">Setup: hospital’s context and patient data</h2>
+<div id="e09640e1" class="cell" data-execution_count="2">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy <span class="im">import</span> fhe_context, packed_codec, Ct</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>cc <span class="op">=</span> fhe_context(<span class="st">"CKKS"</span>, multiplicative_depth<span class="op">=</span><span class="dv">2</span>,</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>                 scaling_mod_size<span class="op">=</span><span class="dv">50</span>, batch_size<span class="op">=</span><span class="dv">8</span>)</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>keys <span class="op">=</span> cc.KeyGen()</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>cc.EvalMultKeyGen(keys.secretKey)     <span class="co"># for encrypted * encrypted; unused below</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>codec <span class="op">=</span> packed_codec(cc)</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="co"># 8 patients, each with 4 biomarker values. We pack each biomarker</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a><span class="co"># across patients: one encrypted value per biomarker, with the patient</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a><span class="co"># values in its slots, so one operation acts on every patient at once.</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>biomarker1 <span class="op">=</span> [<span class="fl">1.2</span>, <span class="fl">0.8</span>, <span class="fl">1.5</span>, <span class="fl">0.3</span>, <span class="fl">2.1</span>, <span class="fl">0.9</span>, <span class="fl">1.1</span>, <span class="fl">1.8</span>]</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>biomarker2 <span class="op">=</span> [<span class="fl">0.5</span>, <span class="fl">1.1</span>, <span class="fl">0.3</span>, <span class="fl">0.8</span>, <span class="fl">0.2</span>, <span class="fl">1.4</span>, <span class="fl">0.7</span>, <span class="fl">0.6</span>]</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>biomarker3 <span class="op">=</span> [<span class="fl">2.0</span>, <span class="fl">1.5</span>, <span class="fl">2.3</span>, <span class="fl">1.0</span>, <span class="fl">1.8</span>, <span class="fl">2.1</span>, <span class="fl">1.6</span>, <span class="fl">2.5</span>]</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>biomarker4 <span class="op">=</span> [<span class="fl">0.1</span>, <span class="fl">0.4</span>, <span class="fl">0.2</span>, <span class="fl">0.6</span>, <span class="fl">0.3</span>, <span class="fl">0.1</span>, <span class="fl">0.5</span>, <span class="fl">0.2</span>]</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>ct1, ct2, ct3, ct4 <span class="op">=</span> (</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>    Ct(cc.Encrypt(keys.publicKey, codec.encode(b)), cc.cc)</span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> b <span class="kw">in</span> (biomarker1, biomarker2, biomarker3, biomarker4)</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="lab-side-apply-the-model-to-encrypted-data" class="level2">
+<h2 class="anchored" data-anchor-id="lab-side-apply-the-model-to-encrypted-data">Lab side: apply the model to encrypted data</h2>
+<p>The lab receives the encrypted biomarkers and applies its proprietary model — without ever seeing patient values.</p>
+<div id="3302bbef" class="cell" data-execution_count="3">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Lab's proprietary model weights (never shared with the hospital)</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>w <span class="op">=</span> [<span class="fl">0.35</span>, <span class="op">-</span><span class="fl">0.20</span>, <span class="fl">0.50</span>, <span class="fl">0.15</span>]</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>b <span class="op">=</span> <span class="fl">1.2</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Encrypted score = w1*x1 + w2*x2 + w3*x3 + w4*x4 + b</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>ct_score <span class="op">=</span> ct1 <span class="op">*</span> w[<span class="dv">0</span>] <span class="op">+</span> ct2 <span class="op">*</span> w[<span class="dv">1</span>] <span class="op">+</span> ct3 <span class="op">*</span> w[<span class="dv">2</span>] <span class="op">+</span> ct4 <span class="op">*</span> w[<span class="dv">3</span>] <span class="op">+</span> b</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="hospital-side-decrypt-the-results" class="level2">
+<h2 class="anchored" data-anchor-id="hospital-side-decrypt-the-results">Hospital side: decrypt the results</h2>
+<div id="abdc7fb1" class="cell" data-execution_count="4">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>pt <span class="op">=</span> cc.Decrypt(ct_score.raw, keys.secretKey)</span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>scores <span class="op">=</span> codec.decode(pt, <span class="dv">8</span>)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> risk_band(s):</span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="st">"HIGH"</span> <span class="cf">if</span> s <span class="op">&gt;</span> <span class="fl">2.0</span> <span class="cf">else</span> <span class="st">"MODERATE"</span> <span class="cf">if</span> s <span class="op">&gt;</span> <span class="fl">1.5</span> <span class="cf">else</span> <span class="st">"LOW"</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>pd.DataFrame({</span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>    <span class="st">"patient"</span>: <span class="bu">range</span>(<span class="dv">1</span>, <span class="dv">9</span>),</span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>    <span class="st">"score"</span>:   [<span class="bu">round</span>(s, <span class="dv">3</span>) <span class="cf">for</span> s <span class="kw">in</span> scores],</span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a>    <span class="st">"risk"</span>:    [risk_band(s) <span class="cf">for</span> s <span class="kw">in</span> scores],</span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a>})</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="4">
+<div>
+
+
+<table class="dataframe caption-top table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">patient</th>
+<th data-quarto-table-cell-role="th">score</th>
+<th data-quarto-table-cell-role="th">risk</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">0</th>
+<td>1</td>
+<td>2.535</td>
+<td>HIGH</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">1</th>
+<td>2</td>
+<td>2.070</td>
+<td>HIGH</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">2</th>
+<td>3</td>
+<td>2.845</td>
+<td>HIGH</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">3</th>
+<td>4</td>
+<td>1.735</td>
+<td>MODERATE</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">4</th>
+<td>5</td>
+<td>2.840</td>
+<td>HIGH</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">5</th>
+<td>6</td>
+<td>2.300</td>
+<td>HIGH</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">6</th>
+<td>7</td>
+<td>2.320</td>
+<td>HIGH</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">7</th>
+<td>8</td>
+<td>2.990</td>
+<td>HIGH</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="verification" class="level2">
+<h2 class="anchored" data-anchor-id="verification">Verification</h2>
+<div id="94836685" class="cell" data-execution_count="5">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>cleartext <span class="op">=</span> (np.array(w) <span class="op">@</span> np.array([biomarker1, biomarker2,</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>                                     biomarker3, biomarker4]) <span class="op">+</span> b)</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>max_error <span class="op">=</span> <span class="bu">float</span>(np.<span class="bu">max</span>(np.<span class="bu">abs</span>(np.array(scores) <span class="op">-</span> cleartext)))</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>max_error</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="5">
+<pre><code>1.971756091734278e-13</code></pre>
+</div>
+</div>
+<p>CKKS gives essentially the same answer as cleartext, within floating-point precision.</p>
+<div id="4038ca6a" class="cell" data-execution_count="6">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> max_error <span class="op">&lt;</span> <span class="fl">1e-6</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="the-same-run-in-one-call" class="level2">
+<h2 class="anchored" data-anchor-id="the-same-run-in-one-call">The same run, in one call</h2>
+<div id="7292b109" class="cell" data-execution_count="7">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy.examples <span class="im">import</span> secure_inference</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>result <span class="op">=</span> secure_inference.run()</span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>result.max_error</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="7">
+<pre><code>1.6786572132332367e-13</code></pre>
+</div>
+</div>
+</section>
+<section id="transport-guarantees" class="level2">
+<h2 class="anchored" data-anchor-id="transport-guarantees">Transport guarantees</h2>
+<p>The pipeline above delivers two concrete protections:</p>
+<ol type="1">
+<li><strong>Biomarker values never appear in cleartext outside the hospital.</strong> The lab’s view of the protocol consists of the encrypted values it received and the encrypted score it returned.</li>
+<li><strong>The lab’s coefficients <span class="math inline">\(w\)</span> and <span class="math inline">\(b\)</span> are never sent to the hospital in cleartext.</strong> They are used only to construct the returned encrypted score inside the lab’s Python session.</li>
+</ol>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 38%">
+<col style="width: 61%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Party</th>
+<th>Cleartext view</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Hospital</td>
+<td>Patient biomarkers (local), decrypted scores</td>
+</tr>
+<tr class="even">
+<td>Lab</td>
+<td>Encrypted values only — no cleartext biomarker values, no cleartext scores</td>
+</tr>
+</tbody>
+</table>
+<p>These are necessary conditions for any model-as-a-service deployment that does not trust the lab with cleartext patient data. They are not sufficient conditions, as the next section shows.</p>
+</section>
+<section id="threat-model-model-extraction-from-the-hospital-side" class="level2">
+<h2 class="anchored" data-anchor-id="threat-model-model-extraction-from-the-hospital-side">Threat model: model extraction from the hospital side</h2>
+<p>The hospital holds the secret key and decides what goes into the encrypted queries. Nothing in the FHE pipeline restricts the biomarker values the hospital encrypts. For a linear model with four biomarkers and a bias, the hospital can recover every coefficient with five queries by submitting the standard basis:</p>
+<ul>
+<li><span class="math inline">\(\mathbf{e}_0 = (0,0,0,0)\ \Rightarrow\ \text{score} = b\)</span></li>
+<li><span class="math inline">\(\mathbf{e}_1 = (1,0,0,0)\ \Rightarrow\ \text{score} = w_1 + b\)</span></li>
+<li><span class="math inline">\(\mathbf{e}_2 = (0,1,0,0)\ \Rightarrow\ \text{score} = w_2 + b\)</span></li>
+<li><span class="math inline">\(\mathbf{e}_3 = (0,0,1,0)\ \Rightarrow\ \text{score} = w_3 + b\)</span></li>
+<li><span class="math inline">\(\mathbf{e}_4 = (0,0,0,1)\ \Rightarrow\ \text{score} = w_4 + b\)</span></li>
+</ul>
+<p>Subtracting the first score from each of the others recovers the four weights exactly. We can run this attack in the same Python session: wrap the lab’s scoring pipeline as a function that closes over <span class="math inline">\(w\)</span> and <span class="math inline">\(b\)</span> without revealing them, then pack the five probes across slots 1–5 of the four encrypted biomarker vectors.</p>
+<div id="694fa96d" class="cell" data-execution_count="8">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Lab pipeline wrapped as a function. Closes over `w` and `b`; the</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="co"># caller (hospital) never reads either.</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> lab_score(ct_bio):</span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> (ct_bio[<span class="dv">0</span>] <span class="op">*</span> w[<span class="dv">0</span>] <span class="op">+</span> ct_bio[<span class="dv">1</span>] <span class="op">*</span> w[<span class="dv">1</span>]</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>            <span class="op">+</span> ct_bio[<span class="dv">2</span>] <span class="op">*</span> w[<span class="dv">2</span>] <span class="op">+</span> ct_bio[<span class="dv">3</span>] <span class="op">*</span> w[<span class="dv">3</span>] <span class="op">+</span> b)</span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Hospital crafts five probes packed across slots 1..5. Slot 1 is e_0</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="co"># (all zeros, probes b). Slot j+1 is e_j (a one in position j, probes</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="co"># w_j + b).</span></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a>probe_bio <span class="op">=</span> [</span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a>    [<span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>],</span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a>    [<span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>],</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a>    [<span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>],</span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a>    [<span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">1</span>, <span class="dv">0</span>, <span class="dv">0</span>, <span class="dv">0</span>],</span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a>]</span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a>ct_probe <span class="op">=</span> [Ct(cc.Encrypt(keys.publicKey, codec.encode(v)), cc.cc) <span class="cf">for</span> v <span class="kw">in</span> probe_bio]</span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-18"><a href="#cb9-18" aria-hidden="true" tabindex="-1"></a>probe_pt <span class="op">=</span> cc.Decrypt(lab_score(ct_probe).raw, keys.secretKey)</span>
+<span id="cb9-19"><a href="#cb9-19" aria-hidden="true" tabindex="-1"></a>probe_scores <span class="op">=</span> np.asarray(codec.decode(probe_pt, <span class="dv">5</span>))</span>
+<span id="cb9-20"><a href="#cb9-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-21"><a href="#cb9-21" aria-hidden="true" tabindex="-1"></a>b_hat <span class="op">=</span> probe_scores[<span class="dv">0</span>]</span>
+<span id="cb9-22"><a href="#cb9-22" aria-hidden="true" tabindex="-1"></a>w_hat <span class="op">=</span> probe_scores[<span class="dv">1</span>:<span class="dv">5</span>] <span class="op">-</span> b_hat</span>
+<span id="cb9-23"><a href="#cb9-23" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-24"><a href="#cb9-24" aria-hidden="true" tabindex="-1"></a>pd.DataFrame([[b] <span class="op">+</span> w, [b_hat] <span class="op">+</span> <span class="bu">list</span>(w_hat)],</span>
+<span id="cb9-25"><a href="#cb9-25" aria-hidden="true" tabindex="-1"></a>             index<span class="op">=</span>[<span class="st">"true"</span>, <span class="st">"recovered"</span>],</span>
+<span id="cb9-26"><a href="#cb9-26" aria-hidden="true" tabindex="-1"></a>             columns<span class="op">=</span>[<span class="st">"b"</span>, <span class="st">"w1"</span>, <span class="st">"w2"</span>, <span class="st">"w3"</span>, <span class="st">"w4"</span>]).<span class="bu">round</span>(<span class="dv">6</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="8">
+<div>
+
+
+<table class="dataframe caption-top table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">b</th>
+<th data-quarto-table-cell-role="th">w1</th>
+<th data-quarto-table-cell-role="th">w2</th>
+<th data-quarto-table-cell-role="th">w3</th>
+<th data-quarto-table-cell-role="th">w4</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">true</th>
+<td>1.2</td>
+<td>0.35</td>
+<td>-0.2</td>
+<td>0.5</td>
+<td>0.15</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">recovered</th>
+<td>1.2</td>
+<td>0.35</td>
+<td>-0.2</td>
+<td>0.5</td>
+<td>0.15</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+<p>The recovered coefficients match the lab’s true coefficients to CKKS precision. Five queries — one bias probe plus one per biomarker — are enough because the scoring function is linear in the biomarkers; a linear function of <span class="math inline">\(k\)</span> inputs is fully specified by any <span class="math inline">\(k + 1\)</span> affinely independent point evaluations. FHE does not impede this extraction: the hospital is the party that decrypts, the scoring function is the thing being released, and the standard basis is a legal query vector.</p>
+<p>The same attack in one call:</p>
+<div id="dfd3eeab" class="cell" data-execution_count="9">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>attack <span class="op">=</span> secure_inference.extract_model()</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ss">f"</span><span class="sc">{</span>attack[<span class="st">'n_queries'</span>]<span class="sc">}</span><span class="ss"> queries, max weight error </span><span class="sc">{</span>attack[<span class="st">'max_weight_error'</span>]<span class="sc">:.1e}</span><span class="ss">"</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="9">
+<pre><code>'5 queries, max weight error 1.6e-13'</code></pre>
+</div>
+</div>
+</section>
+<section id="layered-defenses" class="level2">
+<h2 class="anchored" data-anchor-id="layered-defenses">Layered defenses</h2>
+<p>A deployment that needs the scoring function to stay proprietary has to layer defenses <em>on top of</em> the FHE transport:</p>
+<ul>
+<li><strong>Output perturbation.</strong> Adding calibrated noise to the decrypted score — a differential-privacy mechanism — turns each query into a noisy observation rather than an exact readout. Extraction accuracy degrades with the noise variance and a query budget can be accounted for explicitly.</li>
+<li><strong>Query-budget accounting.</strong> Capping the number of queries a client can issue in a session bounds how much of the model can leak before the budget is exhausted. This composes with output perturbation rather than replacing it.</li>
+<li><strong>Threshold FHE.</strong> Splitting the secret key across several parties (see the <a href="./cox-threshold.html">Cox threshold page</a> for the master/worker case) changes who can decrypt and under what audit trail. The hospital alone can no longer mount the adaptive-query attack; decryption requires cooperation from the other key-holders.</li>
+<li><strong>Non-linear scoring structure.</strong> A linear model is the trivial extraction case. Non-linear scorers (the logistic model of <a href="./encrypted-regression.html">encrypted regression</a>, polynomial compositions) resist closed-form basis-vector attacks, though approximation attacks from the model-extraction literature still apply.</li>
+</ul>
+<p>The page above shows the transport mechanics end-to-end. It is a <em>toy illustration</em> in that the linear scorer plus hospital-held secret key is exactly the configuration where the five-query attack works; a production model-as-a-service deployment is the transport layer plus at least one of the defenses above.</p>
+</section>
+<section id="network-protocol-serialization" class="level2">
+<h2 class="anchored" data-anchor-id="network-protocol-serialization">Network protocol: serialization</h2>
+<p>In practice the hospital and lab are on different machines. All objects serialize for network transport:</p>
+<div id="20d3a274" class="cell" data-execution_count="10">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> tempfile</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> pathlib <span class="im">import</span> Path</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> openfhe</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>tdir <span class="op">=</span> Path(tempfile.mkdtemp())</span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a>openfhe.SerializeToFile(<span class="bu">str</span>(tdir <span class="op">/</span> <span class="st">"context.bin"</span>), cc.cc, openfhe.BINARY)</span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a>openfhe.SerializeToFile(<span class="bu">str</span>(tdir <span class="op">/</span> <span class="st">"pubkey.bin"</span>), keys.publicKey, openfhe.BINARY)</span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a>openfhe.SerializeToFile(<span class="bu">str</span>(tdir <span class="op">/</span> <span class="st">"patient_bm1.bin"</span>), ct1.raw, openfhe.BINARY)</span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Lab receives the serialized files</span></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a>cc_lab, _ <span class="op">=</span> openfhe.DeserializeCryptoContext(<span class="bu">str</span>(tdir <span class="op">/</span> <span class="st">"context.bin"</span>), openfhe.BINARY)</span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a>ct_lab, _ <span class="op">=</span> openfhe.DeserializeCiphertext(<span class="bu">str</span>(tdir <span class="op">/</span> <span class="st">"patient_bm1.bin"</span>), openfhe.BINARY)</span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a><span class="co"># Lab applies its weights to the deserialized encrypted value</span></span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a>ct_weighted <span class="op">=</span> Ct(ct_lab, cc_lab) <span class="op">*</span> <span class="fl">0.35</span></span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a><span class="co"># Lab returns the result</span></span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a>openfhe.SerializeToFile(<span class="bu">str</span>(tdir <span class="op">/</span> <span class="st">"weighted.bin"</span>), ct_weighted.raw, openfhe.BINARY)</span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a><span class="co"># Hospital receives, deserializes, decrypts</span></span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a>ct_recv, _ <span class="op">=</span> openfhe.DeserializeCiphertext(<span class="bu">str</span>(tdir <span class="op">/</span> <span class="st">"weighted.bin"</span>), openfhe.BINARY)</span>
+<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a>codec.decode(cc.Decrypt(ct_recv, keys.secretKey), <span class="dv">8</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="10">
+<pre><code>[0.420000000000088,
+ 0.28000000000007474,
+ 0.5249999999999978,
+ 0.10499999999989246,
+ 0.7349999999999497,
+ 0.31499999999999106,
+ 0.3850000000001066,
+ 0.6299999999999384]</code></pre>
+</div>
+</div>
+
+
+</section>
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/bnaras\.github\.io\/homomorphepy");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

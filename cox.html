@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Distributed Stratified Cox Regression – homomorphepy</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+/* CSS for citations */
+div.csl-bib-body { }
+div.csl-entry {
+  clear: both;
+}
+.hanging-indent div.csl-entry {
+  margin-left:2em;
+  text-indent:-2em;
+}
+div.csl-left-margin {
+  min-width:2em;
+  float:left;
+}
+div.csl-right-inline {
+  margin-left:2em;
+  padding-left:1em;
+}
+div.csl-indent {
+  margin-left: 2em;
+}</style>
+
+
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.min.js" integrity="sha384-ZvpUoO/+PpLXR1lu4jmpXWu80pZlYUAfxl5NsBMWOEPSjUn/6Z/hRTt8+pR6L4N2" crossorigin="anonymous"></script><script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<link href="./logo_240.png" rel="icon" type="image/png">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-55617497126496852ff9f5a59253c640.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+<script src="https://cdn.jsdelivr.net/npm/requirejs@2.3.6/require.min.js" integrity="sha384-c9c+LnTbwQ3aujuU7ULEPVvgLs+Fn6fJUvIGTsuu1ZcCf11fiEubah0ttpca4ntM sha384-6V1/AdqZRWk1KAlWbKBlGhN7VG4iE/yAZcO6NZPMF8od0vukrvr0tg4qY6NSrItx" crossorigin="anonymous"></script>
+
+<script type="application/javascript">define('jquery', [],function() {return window.jQuery;})</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="nav-fixed quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a href="./index.html" class="navbar-brand navbar-brand-logo">
+    <img src="./logo_240.png" alt="homomorphepy hex logo" class="navbar-logo light-content">
+    <img src="./logo_240.png" alt="homomorphepy hex logo" class="navbar-logo dark-content">
+    </a>
+    <a class="navbar-brand" href="./index.html">
+    <span class="navbar-title">homomorphepy</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="./index.html"> 
+<span class="menu-text">Home</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="./introduction.html"> 
+<span class="menu-text">Introduction</span></a>
+  </li>  
+  <li class="nav-item dropdown ">
+    <a class="nav-link dropdown-toggle" href="#" id="nav-menu-examples" role="link" data-bs-toggle="dropdown" aria-expanded="false">
+ <span class="menu-text">Examples</span>
+    </a>
+    <ul class="dropdown-menu" aria-labelledby="nav-menu-examples">    
+        <li>
+    <a class="dropdown-item" href="./aggregation.html">
+ <span class="dropdown-text">Privacy-Preserving Count Aggregation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./query-count.html">
+ <span class="dropdown-text">Distributed Query Count with Threshold Keys</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./mle.html">
+ <span class="dropdown-text">Distributed Maximum Likelihood Estimation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox.html">
+ <span class="dropdown-text">Distributed Stratified Cox Regression</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox-threshold.html">
+ <span class="dropdown-text">Distributed Cox Regression with Threshold Key Generation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox-lasso.html">
+ <span class="dropdown-text">Federated Cox-Lasso via Consensus ADMM on DLBCL</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./secure-inference.html">
+ <span class="dropdown-text">Secure Model Inference on Encrypted Data</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./encrypted-regression.html">
+ <span class="dropdown-text">Encrypted Logistic Regression Prediction</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./similarity.html">
+ <span class="dropdown-text">Federated Cosine Similarity with Site-Private Fine-Tuned Models</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./dp.html">
+ <span class="dropdown-text">Threshold Cox with Gaussian Noise (Demonstration)</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./consensus-admm-dp.html">
+ <span class="dropdown-text">Consensus ADMM with Gaussian Noise (Demonstration)</span></a>
+  </li>  
+    </ul>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="./precision.html"> 
+<span class="menu-text">Precision</span></a>
+  </li>  
+</ul>
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/bnaras/homomorphepy"> <i class="bi bi-github" role="img" aria-label="GitHub">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#the-statistical-problem" id="toc-the-statistical-problem" class="nav-link active" data-scroll-target="#the-statistical-problem">The statistical problem</a></li>
+  <li><a href="#dlbcl-lymphoma-cohort" id="toc-dlbcl-lymphoma-cohort" class="nav-link" data-scroll-target="#dlbcl-lymphoma-cohort">DLBCL lymphoma cohort</a></li>
+  <li><a href="#the-aggregated-fit" id="toc-the-aggregated-fit" class="nav-link" data-scroll-target="#the-aggregated-fit">The aggregated fit</a></li>
+  <li><a href="#the-protocol" id="toc-the-protocol" class="nav-link" data-scroll-target="#the-protocol">The protocol</a></li>
+  <li><a href="#wiring-up-the-protocol" id="toc-wiring-up-the-protocol" class="nav-link" data-scroll-target="#wiring-up-the-protocol">Wiring up the protocol</a></li>
+  <li><a href="#iterative-mle-through-the-encrypted-protocol" id="toc-iterative-mle-through-the-encrypted-protocol" class="nav-link" data-scroll-target="#iterative-mle-through-the-encrypted-protocol">Iterative MLE through the encrypted protocol</a></li>
+  <li><a href="#comparison-with-the-cleartext-fit" id="toc-comparison-with-the-cleartext-fit" class="nav-link" data-scroll-target="#comparison-with-the-cleartext-fit">Comparison with the cleartext fit</a></li>
+  <li><a href="#what-just-happened" id="toc-what-just-happened" class="nav-link" data-scroll-target="#what-just-happened">What just happened</a></li>
+  <li><a href="#the-same-run-in-one-call" id="toc-the-same-run-in-one-call" class="nav-link" data-scroll-target="#the-same-run-in-one-call">The same run, in one call</a></li>
+  <li><a href="#what-this-demonstrates" id="toc-what-this-demonstrates" class="nav-link" data-scroll-target="#what-this-demonstrates">What this demonstrates</a></li>
+  <li><a href="#caveats-and-extensions" id="toc-caveats-and-extensions" class="nav-link" data-scroll-target="#caveats-and-extensions">Caveats and extensions</a></li>
+  </ul>
+<div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="cox.ipynb" download="cox.ipynb"><i class="bi bi-journal-code"></i>Jupyter</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Distributed Stratified Cox Regression</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="the-statistical-problem" class="level2">
+<h2 class="anchored" data-anchor-id="the-statistical-problem">The statistical problem</h2>
+<p>The Cox proportional hazards model is widely used in medical statistics. Given covariates <span class="math inline">\(x_i\)</span> for subject <span class="math inline">\(i\)</span>, an event time <span class="math inline">\(t_i\)</span>, and an event indicator <span class="math inline">\(\delta_i\)</span>, the hazard is modeled as</p>
+<p><span class="math display">\[
+h(t \mid x_i) \;=\; h_0(t) \, \exp(\beta^\top x_i)
+\]</span></p>
+<p>where <span class="math inline">\(h_0(t)\)</span> is an unspecified baseline hazard and <span class="math inline">\(\beta\)</span> is the vector of regression coefficients we want to estimate. The <strong>partial log-likelihood</strong> depends only on <span class="math inline">\(\beta\)</span>:</p>
+<p><span class="math display">\[
+\ell(\beta) \;=\; \sum_{i: \delta_i = 1}
+  \left[\, \beta^\top x_i \;-\; \log\!\!\sum_{j \in R_i} \exp(\beta^\top x_j) \,\right]
+\]</span></p>
+<p>where <span class="math inline">\(R_i\)</span> is the risk set at time <span class="math inline">\(t_i\)</span>.</p>
+<p>For <strong>stratified</strong> Cox regression — when baseline hazards differ across strata (e.g.&nbsp;across study sites) but the coefficients <span class="math inline">\(\beta\)</span> are shared — the partial log-likelihood becomes a sum over strata:</p>
+<p><span class="math display">\[
+\ell(\beta) \;=\; \sum_{s=1}^{S} \ell_s(\beta).
+\]</span></p>
+<p>Because the log-likelihood is a sum over strata, each site can compute its own term. The master/worker setup used by <code>distcomp</code>, <code>DataSHIELD</code>, and <code>WebDISCO</code> relies on this: a master sends the current <span class="math inline">\(\beta\)</span> to the sites, each site computes <span class="math inline">\(\ell_s(\beta)\)</span> on its own data, and the master adds the results. We use the same setup, but the sites encrypt their terms under CKKS, so the master sees only the sum and not the individual terms.</p>
+</section>
+<section id="dlbcl-lymphoma-cohort" class="level2">
+<h2 class="anchored" data-anchor-id="dlbcl-lymphoma-cohort">DLBCL lymphoma cohort</h2>
+<p>We use the diffuse large-B-cell lymphoma (DLBCL) cohort of <span class="citation" data-cites="Rosenwald2002"><span class="nocase">Rosenwald et al.</span> (<a href="#ref-Rosenwald2002" role="doc-biblioref">2002</a>)</span>, the same dataset that <span class="citation" data-cites="BayleFanLou2025">Bayle et al. (<a href="#ref-BayleFanLou2025" role="doc-biblioref">2025</a>)</span> use to motivate distributed Cox estimation. The table <code>load_dlbcl()</code> returns excludes the five patients with zero follow-up time (following <span class="citation" data-cites="BayleFanLou2025">Bayle et al. (<a href="#ref-BayleFanLou2025" role="doc-biblioref">2025</a>)</span>), leaving 235 patients with 133 deaths over a median follow-up of 2.8 years. The published outcome predictor combines four gene-expression signatures (germinal-center B cell, lymph node, proliferation, and MHC class II) and the single gene BMP6. We model the hazard as a function of those five variables, stratified by molecular subgroup (GCB, ABC, Type III), and we treat each subgroup as a site. The three sites differ in size (GCB <span class="math inline">\(n=115\)</span>, ABC <span class="math inline">\(n=71\)</span>, Type III <span class="math inline">\(n=49\)</span>, with 54, 49, and 30 deaths respectively); the protocol does not require equal sizes.</p>
+<div id="b38dcdf6" class="cell" data-execution_count="3">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy <span class="im">import</span> load_dlbcl, site_order</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> load_dlbcl()</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>COVARIATES <span class="op">=</span> [<span class="st">"GCB_sig"</span>, <span class="st">"LN_sig"</span>, <span class="st">"Prolif_sig"</span>, <span class="st">"BMP6"</span>, <span class="st">"MHC2_sig"</span>]</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> site_frame(name):</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>    m <span class="op">=</span> (df[<span class="st">"Subgroup"</span>] <span class="op">==</span> name).to_numpy()</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>        <span class="st">"time"</span>:   df[<span class="st">"time"</span>].to_numpy(dtype<span class="op">=</span><span class="bu">float</span>)[m],</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>        <span class="st">"status"</span>: df[<span class="st">"status"</span>].to_numpy(dtype<span class="op">=</span><span class="bu">int</span>)[m],</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>        <span class="st">"X"</span>:      np.column_stack([df[c].to_numpy(dtype<span class="op">=</span><span class="bu">float</span>)[m]</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>                                   <span class="cf">for</span> c <span class="kw">in</span> COVARIATES]),</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a>cox_data <span class="op">=</span> {name: site_frame(name) <span class="cf">for</span> name <span class="kw">in</span> site_order()}</span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>df.groupby(<span class="st">"Subgroup"</span>, observed<span class="op">=</span><span class="va">True</span>).agg(n<span class="op">=</span>(<span class="st">"time"</span>, <span class="st">"size"</span>),</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a>                                          events<span class="op">=</span>(<span class="st">"status"</span>, <span class="st">"sum"</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="3">
+<div>
+
+
+<table class="dataframe caption-top table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">n</th>
+<th data-quarto-table-cell-role="th">events</th>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">Subgroup</th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">GCB</th>
+<td>115</td>
+<td>54</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">ABC</th>
+<td>71</td>
+<td>49</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">Type III</th>
+<td>49</td>
+<td>30</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+</section>
+<section id="the-aggregated-fit" class="level2">
+<h2 class="anchored" data-anchor-id="the-aggregated-fit">The aggregated fit</h2>
+<p>If all data were in one place, we would fit the stratified Cox model directly:</p>
+<div id="527b3b70" class="cell" data-execution_count="4">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> statsmodels.duration.hazard_regression <span class="im">import</span> PHReg</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>agg_model <span class="op">=</span> PHReg(df[<span class="st">"time"</span>], df[COVARIATES], status<span class="op">=</span>df[<span class="st">"status"</span>],</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>                  strata<span class="op">=</span>df[<span class="st">"Subgroup"</span>].cat.codes, ties<span class="op">=</span><span class="st">"efron"</span>)</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>agg_fit <span class="op">=</span> agg_model.fit()</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(agg_fit.summary())</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>agg_loglik <span class="op">=</span> (agg_model.loglike(np.zeros(<span class="bu">len</span>(COVARIATES))),</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>              agg_model.loglike(agg_fit.params))</span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a>agg_loglik</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>                         Results: PHReg
+================================================================
+Model:                   PH Reg      Num strata:            3   
+Dependent variable:      time        Min stratum size:      49  
+Ties:                    Efron       Max stratum size:      115 
+Sample size:             235         Avg stratum size:      78.3
+Num. events:             133                                    
+----------------------------------------------------------------
+            log HR log HR SE   HR      t    P&gt;|t|  [0.025 0.975]
+----------------------------------------------------------------
+GCB_sig    -0.2639    0.1194 0.7681 -2.2099 0.0271 0.6078 0.9706
+LN_sig     -0.2544    0.0852 0.7754 -2.9871 0.0028 0.6562 0.9163
+Prolif_sig  0.3031    0.1498 1.3541  2.0234 0.0430 1.0095 1.8162
+BMP6        0.3036    0.1073 1.3548  2.8304 0.0046 1.0979 1.6718
+MHC2_sig   -0.3191    0.0941 0.7268 -3.3905 0.0007 0.6043 0.8740
+================================================================
+Confidence intervals are for the hazard ratios</code></pre>
+</div>
+<div class="cell-output cell-output-display" data-execution_count="4">
+<pre><code>(np.float64(-516.59855116308), np.float64(-495.22902176698074))</code></pre>
+</div>
+</div>
+<p>The first log-likelihood is at <span class="math inline">\(\beta = 0\)</span> (the null model); the second is at the MLE. The goal is to reproduce these estimates without the three sites pooling their data.</p>
+</section>
+<section id="the-protocol" class="level2">
+<h2 class="anchored" data-anchor-id="the-protocol">The protocol</h2>
+<p>We use the same master/worker topology as the MLE page: master broadcasts <span class="math inline">\(\beta\)</span>, each worker computes its local Cox partial log-likelihood at <span class="math inline">\(\beta\)</span>, encrypts it under the master’s public key, and returns the encrypted value. The master sums the encrypted contributions homomorphically and decrypts the total. Mathematically nothing changes from the MLE case; only the local computation differs.</p>
+<p>The local computation uses <code>PHReg.loglike()</code>, which returns the partial log-likelihood at the supplied <span class="math inline">\(\beta\)</span> without fitting. <code>PHReg</code> defaults to Breslow’s treatment of ties; we pass <code>ties="efron"</code>.</p>
+<div id="60eafb7a" class="cell" data-execution_count="5">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> local_cox_nll(data, beta):</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    b <span class="op">=</span> np.asarray(beta, dtype<span class="op">=</span><span class="bu">float</span>).ravel()</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>    model <span class="op">=</span> PHReg(data[<span class="st">"time"</span>], data[<span class="st">"X"</span>],</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>                  status<span class="op">=</span>data[<span class="st">"status"</span>], ties<span class="op">=</span><span class="st">"efron"</span>)</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">float</span>(<span class="op">-</span>model.loglike(b))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="wiring-up-the-protocol" class="level2">
+<h2 class="anchored" data-anchor-id="wiring-up-the-protocol">Wiring up the protocol</h2>
+<p>The summed negative log-likelihood on this cohort is 517 at <span class="math inline">\(\beta = 0\)</span> and 495 at the MLE. CKKS represents values of this size at the default scaling parameters. We raise <code>scaling_mod_size</code> from 50 to 59 for extra precision and set <code>first_mod_size = 60</code>, the library default, explicitly.</p>
+<div id="24595977" class="cell" data-execution_count="6">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy <span class="im">import</span> fhe_context, make_worker, make_ckks_master</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>cc <span class="op">=</span> fhe_context(<span class="st">"CKKS"</span>, multiplicative_depth<span class="op">=</span><span class="dv">1</span>, scaling_mod_size<span class="op">=</span><span class="dv">59</span>,</span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>                 first_mod_size<span class="op">=</span><span class="dv">60</span>, batch_size<span class="op">=</span><span class="dv">8</span>)</span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>keys <span class="op">=</span> cc.KeyGen()</span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a>workers <span class="op">=</span> [make_worker(name, data, local_cox_nll)</span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a>           <span class="cf">for</span> name, data <span class="kw">in</span> cox_data.items()]</span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a>master <span class="op">=</span> make_ckks_master(<span class="st">"Master"</span>, cc, keys)</span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a>master.set_workers(workers)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="6">
+<pre><code>&lt;CKKSMaster Master&gt;</code></pre>
+</div>
+</div>
+</section>
+<section id="iterative-mle-through-the-encrypted-protocol" class="level2">
+<h2 class="anchored" data-anchor-id="iterative-mle-through-the-encrypted-protocol">Iterative MLE through the encrypted protocol</h2>
+<p>We hand <code>scipy.optimize.minimize()</code> a function that looks like a standard multivariate negative log-likelihood. Each call drives one master/worker round and returns a single decrypted scalar.</p>
+<div id="e8679764" class="cell" data-execution_count="7">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> scipy.optimize <span class="im">import</span> minimize</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> encrypted_nll(beta):</span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a>    value <span class="op">=</span> master.aggregate(np.asarray(beta, dtype<span class="op">=</span><span class="bu">float</span>))</span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="fl">1e12</span> <span class="cf">if</span> (value <span class="kw">is</span> <span class="va">None</span> <span class="kw">or</span> np.isnan(value)) <span class="cf">else</span> <span class="bu">float</span>(value)</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a>fit <span class="op">=</span> minimize(encrypted_nll, x0<span class="op">=</span>np.zeros(<span class="bu">len</span>(COVARIATES)),</span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>               method<span class="op">=</span><span class="st">"L-BFGS-B"</span>, options<span class="op">=</span>{<span class="st">"ftol"</span>: <span class="fl">1e-9</span>})</span>
+<span id="cb8-9"><a href="#cb8-9" aria-hidden="true" tabindex="-1"></a>beta_hat <span class="op">=</span> np.asarray(fit.x)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<p>Standard errors come from the Hessian of the same encrypted objective at the fit, by central differences. Each of those evaluations is another protocol round.</p>
+<div id="7cc61934" class="cell" data-execution_count="8">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb9"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> pandas <span class="im">as</span> pd</span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy.examples.cox <span class="im">import</span> fd_hessian</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a>se <span class="op">=</span> np.sqrt(np.diag(np.linalg.inv(fd_hessian(encrypted_nll, beta_hat))))</span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a>pd.DataFrame({<span class="st">"estimate"</span>: beta_hat, <span class="st">"std. error"</span>: se}, index<span class="op">=</span>COVARIATES)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="8">
+<div>
+
+
+<table class="dataframe caption-top table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">estimate</th>
+<th data-quarto-table-cell-role="th">std. error</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">GCB_sig</th>
+<td>-0.263872</td>
+<td>0.119404</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">LN_sig</th>
+<td>-0.254359</td>
+<td>0.085152</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">Prolif_sig</th>
+<td>0.303125</td>
+<td>0.149813</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">BMP6</th>
+<td>0.303637</td>
+<td>0.107278</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">MHC2_sig</th>
+<td>-0.319147</td>
+<td>0.094129</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+<div id="52b47375" class="cell" data-execution_count="9">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="bu">float</span>(<span class="op">-</span>fit.fun)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="9">
+<pre><code>-495.22902176698517</code></pre>
+</div>
+</div>
+</section>
+<section id="comparison-with-the-cleartext-fit" class="level2">
+<h2 class="anchored" data-anchor-id="comparison-with-the-cleartext-fit">Comparison with the cleartext fit</h2>
+<p>To check the encrypted fit, we run the identical objective a second time with the encrypted aggregation replaced by an ordinary sum of the three sites’ cleartext values: same likelihood, same optimizer, same starting values and tolerance, no encryption.</p>
+<div id="2369d7da" class="cell" data-execution_count="10">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> cleartext_nll(beta):</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">sum</span>(local_cox_nll(d, beta) <span class="cf">for</span> d <span class="kw">in</span> cox_data.values())</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>fit_plain <span class="op">=</span> minimize(cleartext_nll, x0<span class="op">=</span>np.zeros(<span class="bu">len</span>(COVARIATES)),</span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a>                     method<span class="op">=</span><span class="st">"L-BFGS-B"</span>, options<span class="op">=</span>{<span class="st">"ftol"</span>: <span class="fl">1e-9</span>})</span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a>beta_plain <span class="op">=</span> np.asarray(fit_plain.x)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div id="bd9cd7c3" class="cell" data-execution_count="11">
+<div class="cell-output cell-output-display" data-execution_count="11">
+<div>
+
+
+<table class="dataframe caption-top table table-sm table-striped small" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">minimize(), encrypted</th>
+<th data-quarto-table-cell-role="th">minimize(), cleartext</th>
+<th data-quarto-table-cell-role="th">absolute difference</th>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">coefficient</th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">GCB_sig</th>
+<td>-0.263872</td>
+<td>-0.263872</td>
+<td>1.81e-07</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">LN_sig</th>
+<td>-0.254359</td>
+<td>-0.254359</td>
+<td>5.84e-08</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">Prolif_sig</th>
+<td>0.303125</td>
+<td>0.303126</td>
+<td>1.11e-07</td>
+</tr>
+<tr class="even">
+<th data-quarto-table-cell-role="th">BMP6</th>
+<td>0.303637</td>
+<td>0.303638</td>
+<td>6.57e-08</td>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">MHC2_sig</th>
+<td>-0.319147</td>
+<td>-0.319147</td>
+<td>5.66e-08</td>
+</tr>
+</tbody>
+</table>
+
+</div>
+</div>
+</div>
+<p>The encrypted fit agrees with the cleartext fit to within 1.81e-07 in every coefficient.</p>
+<div id="5bb395e9" class="cell" data-execution_count="12">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="cf">assert</span> enc_diff.<span class="bu">max</span>() <span class="op">&lt;</span> <span class="fl">1e-4</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="what-just-happened" class="level2">
+<h2 class="anchored" data-anchor-id="what-just-happened">What just happened</h2>
+<p><code>scipy.optimize.minimize()</code> ran its usual L-BFGS-B iterations. Each time it asked for the negative log-likelihood at a point in <span class="math inline">\(\mathbb{R}^5\)</span>, the function ran one CKKS master/worker round across the three sites and returned one decrypted number. <code>minimize()</code> was not modified, and its result matches the cleartext fit of the same objective.</p>
+</section>
+<section id="the-same-run-in-one-call" class="level2">
+<h2 class="anchored" data-anchor-id="the-same-run-in-one-call">The same run, in one call</h2>
+<div id="fec51536" class="cell" data-execution_count="13">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy.examples <span class="im">import</span> cox</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>result <span class="op">=</span> cox.run(backend<span class="op">=</span><span class="st">"ckks"</span>)</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>result.loglik_encrypted, result.loglik_centralized, result.max_abs_difference</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-display" data-execution_count="13">
+<pre><code>(-495.22902176699836, -495.22902176698074, 3.74174537520755e-07)</code></pre>
+</div>
+</div>
+</section>
+<section id="what-this-demonstrates" class="level2">
+<h2 class="anchored" data-anchor-id="what-this-demonstrates">What this demonstrates</h2>
+<ol type="1">
+<li><strong>Python optimizers work unchanged.</strong> Any routine that takes the objective as a function, such as <code>scipy.optimize.minimize()</code>, can be given one that computes its value through the encrypted protocol.</li>
+<li><strong>Stratified Cox regression decomposes additively</strong> across strata, so the master/worker scheme used for Poisson MLE (<a href="./mle.html">MLE page</a>) works unchanged for survival analysis. Only the local computation changes (<code>PHReg</code> instead of the Poisson log-likelihood).</li>
+<li><strong>CKKS encrypts real numbers directly.</strong> An additive scheme such as Paillier would need each value split into integer and fractional parts, with the fractional part approximated as a fraction with a fixed denominator. CKKS needs no such encoding.</li>
+<li><strong>The master/worker classes are reusable.</strong> The same exported <code>Site</code> / <code>Master</code> classes and <code>aggregate()</code> runner drive both this Cox page and the Poisson MLE page — only the per-worker local function differs.</li>
+</ol>
+</section>
+<section id="caveats-and-extensions" class="level2">
+<h2 class="anchored" data-anchor-id="caveats-and-extensions">Caveats and extensions</h2>
+<ul>
+<li><strong>Performance</strong>: each function evaluation requires three CKKS encryptions, three encrypted additions, and one decryption. CKKS encrypt/decrypt dominates the wall-clock cost.</li>
+<li><strong>Information leakage</strong>: the master sees the value of the joint log-likelihood at each <span class="math inline">\(\beta\)</span>. That is less than the individual contributions, and it is what <code>minimize()</code> needs. Hiding it as well would require running Newton-Raphson on encrypted values, which CKKS allows but which is considerably more complex.</li>
+<li><strong>Threshold key generation</strong>: in a real deployment the secret key would be split across the sites (n-of-n threshold), so that no single party, the master included, can decrypt intermediate values on its own. The <a href="./cox-threshold.html">Cox threshold page</a> adds this.</li>
+<li><strong>Beyond Cox</strong>: the same protocol applies to any model whose log-likelihood is a sum over data partitions, such as generalized linear models, mixed-effects models with site-specific random effects, and frailty survival models. Only the local likelihood evaluation changes.</li>
+</ul>
+
+
+
+</section>
+
+<div id="quarto-appendix" class="default"><section class="quarto-appendix-contents" role="doc-bibliography" id="quarto-bibliography"><h2 class="anchored quarto-appendix-heading">References</h2><div id="refs" class="references csl-bib-body hanging-indent" role="list">
+<div id="ref-BayleFanLou2025" class="csl-entry" role="listitem">
+Bayle, Pierre, Jianqing Fan, and Zhipeng Lou. 2025. <span>“Communication-Efficient Distributed Estimation and Inference for <span>Cox</span>’s Model.”</span> <em>Journal of the American Statistical Association</em> 120 (551): 1736–46. <a href="https://doi.org/10.1080/01621459.2025.2516820">https://doi.org/10.1080/01621459.2025.2516820</a>.
+</div>
+<div id="ref-Rosenwald2002" class="csl-entry" role="listitem">
+<span class="nocase">Rosenwald, Andreas, George Wright, Wing C. Chan, et al.</span> 2002. <span>“The Use of Molecular Profiling to Predict Survival After Chemotherapy for Diffuse Large-<span>B</span>-Cell Lymphoma.”</span> <em>New England Journal of Medicine</em> 346 (25): 1937–47. <a href="https://doi.org/10.1056/NEJMoa012914">https://doi.org/10.1056/NEJMoa012914</a>.
+</div>
+</div></section></div></main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/bnaras\.github\.io\/homomorphepy");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

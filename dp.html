@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.10.18">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>Threshold Cox with Gaussian Noise (Demonstration) – homomorphepy</title>
+<style>
+/* Default styles provided by pandoc.
+** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+*/
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: 1.5em;}
+div.column{flex: auto;}
+@media screen {
+div.columns{gap: min(4vw, 1.5em);}
+div.column{overflow-x: auto;}
+}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+/* CSS for citations */
+div.csl-bib-body { }
+div.csl-entry {
+  clear: both;
+}
+.hanging-indent div.csl-entry {
+  margin-left:2em;
+  text-indent:-2em;
+}
+div.csl-left-margin {
+  min-width:2em;
+  float:left;
+}
+div.csl-right-inline {
+  margin-left:2em;
+  padding-left:1em;
+}
+div.csl-indent {
+  margin-left: 2em;
+}</style>
+
+
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<link href="./logo_240.png" rel="icon" type="image/png">
+<script src="site_libs/quarto-html/quarto.js" type="module"></script>
+<script src="site_libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting-64a204ab8560d761af7679ceaba22944.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap-55617497126496852ff9f5a59253c640.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+  <script src="https://cdnjs.cloudflare.com/polyfill/v3/polyfill.min.js?features=es6"></script>
+  <script defer="" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js" type="text/javascript"></script>
+
+<script type="text/javascript">
+const typesetMath = (el) => {
+  if (window.MathJax) {
+    // MathJax Typeset
+    window.MathJax.typeset([el]);
+  } else if (window.katex) {
+    // KaTeX Render
+    var mathElements = el.getElementsByClassName("math");
+    var macros = [];
+    for (var i = 0; i < mathElements.length; i++) {
+      var texText = mathElements[i].firstChild;
+      if (mathElements[i].tagName == "SPAN" && texText && texText.data) {
+        window.katex.render(texText.data, mathElements[i], {
+          displayMode: mathElements[i].classList.contains('display'),
+          throwOnError: false,
+          macros: macros,
+          fleqn: false
+        });
+      }
+    }
+  }
+}
+window.Quarto = {
+  typesetMath
+};
+</script>
+
+</head>
+
+<body class="nav-fixed quarto-light">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a href="./index.html" class="navbar-brand navbar-brand-logo">
+    <img src="./logo_240.png" alt="homomorphepy hex logo" class="navbar-logo light-content">
+    <img src="./logo_240.png" alt="homomorphepy hex logo" class="navbar-logo dark-content">
+    </a>
+    <a class="navbar-brand" href="./index.html">
+    <span class="navbar-title">homomorphepy</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="./index.html"> 
+<span class="menu-text">Home</span></a>
+  </li>  
+  <li class="nav-item">
+    <a class="nav-link" href="./introduction.html"> 
+<span class="menu-text">Introduction</span></a>
+  </li>  
+  <li class="nav-item dropdown ">
+    <a class="nav-link dropdown-toggle" href="#" id="nav-menu-examples" role="link" data-bs-toggle="dropdown" aria-expanded="false">
+ <span class="menu-text">Examples</span>
+    </a>
+    <ul class="dropdown-menu" aria-labelledby="nav-menu-examples">    
+        <li>
+    <a class="dropdown-item" href="./aggregation.html">
+ <span class="dropdown-text">Privacy-Preserving Count Aggregation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./query-count.html">
+ <span class="dropdown-text">Distributed Query Count with Threshold Keys</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./mle.html">
+ <span class="dropdown-text">Distributed Maximum Likelihood Estimation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox.html">
+ <span class="dropdown-text">Distributed Stratified Cox Regression</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox-threshold.html">
+ <span class="dropdown-text">Distributed Cox Regression with Threshold Key Generation</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./cox-lasso.html">
+ <span class="dropdown-text">Federated Cox-Lasso via Consensus ADMM on DLBCL</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./secure-inference.html">
+ <span class="dropdown-text">Secure Model Inference on Encrypted Data</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./encrypted-regression.html">
+ <span class="dropdown-text">Encrypted Logistic Regression Prediction</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./similarity.html">
+ <span class="dropdown-text">Federated Cosine Similarity with Site-Private Fine-Tuned Models</span></a>
+  </li>  
+        <li><hr class="dropdown-divider"></li>
+        <li>
+    <a class="dropdown-item" href="./dp.html">
+ <span class="dropdown-text">Threshold Cox with Gaussian Noise (Demonstration)</span></a>
+  </li>  
+        <li>
+    <a class="dropdown-item" href="./consensus-admm-dp.html">
+ <span class="dropdown-text">Consensus ADMM with Gaussian Noise (Demonstration)</span></a>
+  </li>  
+    </ul>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" href="./precision.html"> 
+<span class="menu-text">Precision</span></a>
+  </li>  
+</ul>
+            <ul class="navbar-nav navbar-nav-scroll ms-auto">
+  <li class="nav-item compact">
+    <a class="nav-link" href="https://github.com/bnaras/homomorphepy"> <i class="bi bi-github" role="img" aria-label="GitHub">
+</i> 
+<span class="menu-text"></span></a>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+        <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">On this page</h2>
+   
+  <ul>
+  <li><a href="#introduction" id="toc-introduction" class="nav-link active" data-scroll-target="#introduction">Introduction</a></li>
+  <li><a href="#a-brief-output-dp-primer" id="toc-a-brief-output-dp-primer" class="nav-link" data-scroll-target="#a-brief-output-dp-primer">A brief output-DP primer</a></li>
+  <li><a href="#the-protocol" id="toc-the-protocol" class="nav-link" data-scroll-target="#the-protocol">The protocol</a></li>
+  <li><a href="#the-cox-setup-same-dlbcl-data-as-the-other-cox-pages" id="toc-the-cox-setup-same-dlbcl-data-as-the-other-cox-pages" class="nav-link" data-scroll-target="#the-cox-setup-same-dlbcl-data-as-the-other-cox-pages">The Cox setup (same DLBCL data as the other Cox pages)</a></li>
+  <li><a href="#threshold-setup-and-dp-noised-workers" id="toc-threshold-setup-and-dp-noised-workers" class="nav-link" data-scroll-target="#threshold-setup-and-dp-noised-workers">Threshold setup and DP-noised workers</a></li>
+  <li><a href="#mechanical-correctness-sigma-0-reproduces-the-threshold-fit" id="toc-mechanical-correctness-sigma-0-reproduces-the-threshold-fit" class="nav-link" data-scroll-target="#mechanical-correctness-sigma-0-reproduces-the-threshold-fit">Mechanical correctness: <span class="math inline">\(\sigma = 0\)</span> reproduces the threshold fit</a></li>
+  <li><a href="#increasing-noise-where-does-it-break" id="toc-increasing-noise-where-does-it-break" class="nav-link" data-scroll-target="#increasing-noise-where-does-it-break">Increasing noise: where does it break?</a></li>
+  <li><a href="#neldermead-at-the-same-noise-scales" id="toc-neldermead-at-the-same-noise-scales" class="nav-link" data-scroll-target="#neldermead-at-the-same-noise-scales">Nelder–Mead at the same noise scales</a></li>
+  <li><a href="#privacy-budget" id="toc-privacy-budget" class="nav-link" data-scroll-target="#privacy-budget">Privacy budget</a></li>
+  </ul>
+<div class="quarto-alternate-formats"><h2>Other Formats</h2><ul><li><a href="dp.ipynb" download="dp.ipynb"><i class="bi bi-journal-code"></i>Jupyter</a></li></ul></div></nav>
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">Threshold Cox with Gaussian Noise (Demonstration)</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<section id="introduction" class="level2">
+<h2 class="anchored" data-anchor-id="introduction">Introduction</h2>
+<p>This page is a demonstration. The previous page, the <a href="./cox-threshold.html">Cox threshold page</a>, fits the Cox model under threshold FHE: the fit matches the cleartext fit, no single party can decrypt, and the aggregator sees only the joint log-likelihood <span class="math inline">\(\ell(\beta)\)</span> at each optimizer query.</p>
+<p>Here we ask what happens if each site also adds Gaussian noise of the kind an <em>output differential privacy</em> mechanism uses. The sensitivity <span class="math inline">\(\Delta = 1\)</span> below is a placeholder, so the <span class="math inline">\(\varepsilon\)</span> values are not a privacy guarantee. Adding the noise takes one extra <code>rng.normal()</code> call per site per query. With the optimizers used here, the fits are poor at any noise level that gives a small <span class="math inline">\(\varepsilon\)</span>. The page runs the fits and reports the numbers.</p>
+</section>
+<section id="a-brief-output-dp-primer" class="level2">
+<h2 class="anchored" data-anchor-id="a-brief-output-dp-primer">A brief output-DP primer</h2>
+<p>Given a query <span class="math inline">\(f: \mathcal{D} \to \mathbb{R}\)</span> on a dataset <span class="math inline">\(D\)</span>, the <em>Gaussian mechanism</em> <span class="citation" data-cites="DworkRoth2014">(<a href="#ref-DworkRoth2014" role="doc-biblioref">Dwork and Roth 2014, sec. 3.5.3</a>)</span> releases <span class="math inline">\(\tilde f(D) = f(D) + \mathcal{N}(0, \sigma^2)\)</span>. If <span class="math inline">\(f\)</span>’s <em>sensitivity</em> (the largest change <span class="math inline">\(f\)</span> can undergo when one record is added or removed) is <span class="math inline">\(\Delta\)</span>, then for any <span class="math inline">\(\varepsilon \in (0, 1)\)</span> and <span class="math inline">\(\delta &gt; 0\)</span>, choosing <span class="math inline">\(\sigma \geq \Delta \sqrt{2\ln(1.25/\delta)}/\varepsilon\)</span> makes a single release of <span class="math inline">\(\tilde f\)</span> satisfy <span class="math inline">\((\varepsilon, \delta)\)</span> differential privacy.</p>
+<p>The optimizer issues many queries, so the per-query budget composes. We use <em>zCDP composition</em> <span class="citation" data-cites="BunSteinke2016">(<a href="#ref-BunSteinke2016" role="doc-biblioref">Bun and Steinke 2016</a>)</span>: the Gaussian mechanism is <span class="math inline">\(\rho\)</span>-zCDP with <span class="math inline">\(\rho = (\Delta/\sigma)^2/2\)</span>; <span class="math inline">\(T\)</span> queries compose linearly to <span class="math inline">\(T \cdot \rho\)</span> in zCDP units; and that converts to <span class="math inline">\((\varepsilon, \delta)\)</span> via <span class="math inline">\(\varepsilon = \rho + 2\sqrt{\rho \log(1/\delta)}\)</span>.</p>
+</section>
+<section id="the-protocol" class="level2">
+<h2 class="anchored" data-anchor-id="the-protocol">The protocol</h2>
+<p>The setup is identical to the <a href="./cox-threshold.html">Cox threshold page</a>, except each site adds an independent Gaussian noise term to its local contribution before encryption. Since variances of independent normals add, the decrypted total is <span class="math inline">\(\ell(\beta) + \mathcal{N}(0, \sigma^2)\)</span> when each site adds <span class="math inline">\(\mathcal{N}(0, \sigma^2/N)\)</span>.</p>
+</section>
+<section id="the-cox-setup-same-dlbcl-data-as-the-other-cox-pages" class="level2">
+<h2 class="anchored" data-anchor-id="the-cox-setup-same-dlbcl-data-as-the-other-cox-pages">The Cox setup (same DLBCL data as the other Cox pages)</h2>
+<div id="898d0402" class="cell" data-execution_count="2">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> numpy <span class="im">as</span> np</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy <span class="im">import</span> load_dlbcl, site_order</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> statsmodels.duration.hazard_regression <span class="im">import</span> PHReg</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>df <span class="op">=</span> load_dlbcl()</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>COVARIATES <span class="op">=</span> [<span class="st">"GCB_sig"</span>, <span class="st">"LN_sig"</span>, <span class="st">"Prolif_sig"</span>, <span class="st">"BMP6"</span>, <span class="st">"MHC2_sig"</span>]</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> site_frame(name):</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>    m <span class="op">=</span> (df[<span class="st">"Subgroup"</span>] <span class="op">==</span> name).to_numpy()</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> {</span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>        <span class="st">"time"</span>:   df[<span class="st">"time"</span>].to_numpy(dtype<span class="op">=</span><span class="bu">float</span>)[m],</span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>        <span class="st">"status"</span>: df[<span class="st">"status"</span>].to_numpy(dtype<span class="op">=</span><span class="bu">int</span>)[m],</span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>        <span class="st">"X"</span>:      np.column_stack([df[c].to_numpy(dtype<span class="op">=</span><span class="bu">float</span>)[m]</span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>                                   <span class="cf">for</span> c <span class="kw">in</span> COVARIATES]),</span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>cox_data <span class="op">=</span> {name: site_frame(name) <span class="cf">for</span> name <span class="kw">in</span> site_order()}</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a>agg_model <span class="op">=</span> PHReg(df[<span class="st">"time"</span>], df[COVARIATES], status<span class="op">=</span>df[<span class="st">"status"</span>],</span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a>                  strata<span class="op">=</span>df[<span class="st">"Subgroup"</span>].cat.codes, ties<span class="op">=</span><span class="st">"efron"</span>)</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a>agg_coef  <span class="op">=</span> np.asarray(agg_model.fit().params, dtype<span class="op">=</span><span class="bu">float</span>)</span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> local_cox_nll(data, beta):</span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>    b <span class="op">=</span> np.asarray(beta, dtype<span class="op">=</span><span class="bu">float</span>).ravel()</span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a>    model <span class="op">=</span> PHReg(data[<span class="st">"time"</span>], data[<span class="st">"X"</span>],</span>
+<span id="cb1-26"><a href="#cb1-26" aria-hidden="true" tabindex="-1"></a>                  status<span class="op">=</span>data[<span class="st">"status"</span>], ties<span class="op">=</span><span class="st">"efron"</span>)</span>
+<span id="cb1-27"><a href="#cb1-27" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> <span class="bu">float</span>(<span class="op">-</span>model.loglike(b))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="threshold-setup-and-dp-noised-workers" class="level2">
+<h2 class="anchored" data-anchor-id="threshold-setup-and-dp-noised-workers">Threshold setup and DP-noised workers</h2>
+<p>The threshold setup is also the same as on the Cox threshold page. The only change is in each worker’s local function: it adds an independent <span class="math inline">\(\mathcal{N}(0, \sigma^2/N)\)</span> draw to its local nLL before returning it. The noisy value is then encrypted as usual.</p>
+<div id="3365f90c" class="cell" data-execution_count="3">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb2"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> inspect</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a><span class="im">from</span> homomorphepy.examples <span class="im">import</span> dp</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a><span class="bu">print</span>(inspect.getsource(dp.fit_at_sigma))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>def fit_at_sigma(
+    sigma: float,
+    method: str = "Nelder-Mead",
+    seed: int = 1,
+    delta: float = DEFAULT_DELTA,
+) -&gt; DPFit:
+    """Fit the threshold-Cox model with per-site Gaussian noise.
+
+    Each site adds ``N(0, sigma^2/N)`` to its local negative
+    log-likelihood before encryption, so the decrypted aggregate
+    carries ``N(0, sigma^2)``.
+    """
+    sites = _cox_sites()
+    names = list(sites)
+    n_sites = len(names)
+    rng = np.random.default_rng(seed)
+    scale = sigma / math.sqrt(n_sites)
+
+    def noisy_local(data, beta):
+        value = local_cox_nll(data, beta)
+        if value is None or math.isnan(value):
+            return math.nan
+        return value + (rng.normal(0.0, scale) if sigma &gt; 0 else 0.0)
+
+    ctx = fhe_context("CKKS", **CKKS_PARAMS)
+    workers = [make_worker(n, sites[n], noisy_local) for n in names]
+    master = make_threshold_master("Aggregator", ctx, workers)
+
+    calls = {"n": 0}
+
+    def objective(beta):
+        calls["n"] += 1
+        v = master.aggregate(np.asarray(beta, dtype=float))
+        return 1e12 if (v is None or math.isnan(v)) else float(v)
+
+    # The finite-difference step is LOAD-BEARING here, unlike in
+    # examples/cox.py where sweeping it changed nothing. Without DP
+    # noise the encrypted objective is accurate to ~1e-13 and any step
+    # works. Under DP the gradient noise is the function noise divided
+    # by h, so scipy's default (~1.5e-8) amplifies sigma by ~7e7 and
+    # destroys the gradient even at sigma = 1e-4 -- the optimizer then
+    # returns x0 unchanged and still reports success. At h = 1e-3 the
+    # amplification is ~707x, which is survivable; the constant is
+    # load-bearing rather than decorative here.
+    x0 = np.zeros(len(COVARIATES))
+    fun = objective
+    if method == "BFGS":
+        options = {"gtol": 1e-4, "finite_diff_rel_step": FINITE_DIFF_STEP}
+    elif method == "L-BFGS-B":
+        options = {"ftol": 1e-9, "finite_diff_rel_step": FINITE_DIFF_STEP}
+    elif method == "Nelder-Mead":
+        # Starting simplex: NM_SIMPLEX_STEP added to one coordinate per
+        # vertex. Stop when the spread of objective values over the
+        # simplex is at most NM_RELTOL * (|f(x0)| + NM_RELTOL), or after
+        # NM_MAXFEV evaluations. f(x0) is evaluated once and reused as
+        # the first simplex vertex, so it costs one query, not two.
+        f0 = objective(x0)
+        first = {"pending": True}
+
+        def fun(beta):
+            if first["pending"] and np.array_equal(beta, x0):
+                first["pending"] = False
+                return f0
+            return objective(beta)
+
+        options = {
+            "initial_simplex": np.vstack([x0, x0 + NM_SIMPLEX_STEP * np.eye(len(x0))]),
+            "xatol": np.inf,
+            "fatol": NM_RELTOL * (abs(f0) + NM_RELTOL),
+            "maxfev": NM_MAXFEV,
+        }
+    else:
+        raise ValueError(f"unsupported method {method!r}")
+    fit = minimize(fun, x0=x0, method=method, options=options)
+    beta_hat = np.asarray(fit.x, dtype=float)
+
+    # Centralized cleartext fit: what DP is degrading away from.
+    from statsmodels.duration.hazard_regression import PHReg
+
+    from homomorphepy.fixtures import load_dlbcl
+
+    df = load_dlbcl()
+    ref = PHReg(
+        df["time"].to_numpy(dtype=float),
+        np.column_stack([df[c].to_numpy(dtype=float) for c in COVARIATES]),
+        status=df["status"].to_numpy(dtype=int),
+        strata=df["Subgroup"].cat.codes.to_numpy(),
+        ties="efron",
+    ).fit()
+    beta_ref = np.asarray(ref.params, dtype=float)
+
+    return DPFit(
+        sigma=sigma,
+        method=method,
+        coefficients=dict(zip(COVARIATES, beta_hat.tolist(), strict=True)),
+        centralized=dict(zip(COVARIATES, beta_ref.tolist(), strict=True)),
+        max_abs_diff=float(np.max(np.abs(beta_hat - beta_ref))),
+        # How many coefficients still land on the correct side of zero:
+        # the qualitative conclusion, which survives longer than the
+        # point estimates do.
+        sign_agreement=int(np.sum(np.sign(beta_hat) == np.sign(beta_ref))),
+        n_queries=calls["n"],
+        converged=bool(fit.success),
+        epsilon=budget(calls["n"], sigma, delta)["epsilon"],
+        context=ctx,
+    )
+</code></pre>
+</div>
+</div>
+<p>Each fit is a full optimizer run through the encrypted channel, so the sweep is recorded once rather than run on every render:</p>
+<div class="code-copy-outer-scaffold"><div class="sourceCode" id="cb4"><pre class="sourceCode bash code-with-copy"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">OMP_NUM_THREADS</span><span class="op">=</span>2 <span class="ex">uv</span> run python docs/_recorded/record_dp_sweep.py</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<p>The recorded sweep took 1.6 minutes.</p>
+</section>
+<section id="mechanical-correctness-sigma-0-reproduces-the-threshold-fit" class="level2">
+<h2 class="anchored" data-anchor-id="mechanical-correctness-sigma-0-reproduces-the-threshold-fit">Mechanical correctness: <span class="math inline">\(\sigma = 0\)</span> reproduces the threshold fit</h2>
+<p>When the noise is zero the protocol reduces to the lossless threshold protocol. The fitted coefficients match the centralized fit to threshold-CKKS precision.</p>
+<div id="bfb4cea9" class="cell" data-execution_count="5">
+<div class="cell-output cell-output-display cell-output-markdown" data-execution_count="5">
+<table class="caption-top table table-sm table-striped small">
+<caption>Threshold-DP protocol at <span class="math inline">\(\sigma = 0\)</span> (BFGS) vs the centralized cleartext fit</caption>
+<colgroup>
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+<col style="width: 25%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: right;">Coefficient</th>
+<th style="text-align: right;"><span class="math inline">\(\hat\beta\)</span>, centralized</th>
+<th style="text-align: right;"><span class="math inline">\(\hat\beta\)</span>, protocol at <span class="math inline">\(\sigma = 0\)</span></th>
+<th style="text-align: right;"><span class="math inline">\(\lvert \text{difference} \rvert\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">GCB_sig</td>
+<td style="text-align: right;">-0.2638716</td>
+<td style="text-align: right;">-0.2638715</td>
+<td style="text-align: right;"><span class="math inline">\(1.167 \times 10^{-7}\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">LN_sig</td>
+<td style="text-align: right;">-0.2543592</td>
+<td style="text-align: right;">-0.2543592</td>
+<td style="text-align: right;"><span class="math inline">\(2.349 \times 10^{-8}\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">Prolif_sig</td>
+<td style="text-align: right;">0.3031258</td>
+<td style="text-align: right;">0.3031262</td>
+<td style="text-align: right;"><span class="math inline">\(3.845 \times 10^{-7}\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">BMP6</td>
+<td style="text-align: right;">0.3036375</td>
+<td style="text-align: right;">0.3036377</td>
+<td style="text-align: right;"><span class="math inline">\(1.353 \times 10^{-7}\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">MHC2_sig</td>
+<td style="text-align: right;">-0.3191467</td>
+<td style="text-align: right;">-0.3191467</td>
+<td style="text-align: right;"><span class="math inline">\(7.417 \times 10^{-9}\)</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>The maximum absolute coefficient difference at <span class="math inline">\(\sigma = 0\)</span> is <span class="math inline">\(3.84 \times 10^{-7}\)</span>. So any deviation from the centralized fit below comes from the noise.</p>
+</section>
+<section id="increasing-noise-where-does-it-break" class="level2">
+<h2 class="anchored" data-anchor-id="increasing-noise-where-does-it-break">Increasing noise: where does it break?</h2>
+<p>We sweep <span class="math inline">\(\sigma\)</span> across five orders of magnitude. Each fit is one full BFGS run over the threshold-DP encrypted nLL. BFGS estimates the gradient by finite differences of these nLL values.</p>
+<div id="df25c4b8" class="cell" data-execution_count="6">
+<div class="cell-output cell-output-display cell-output-markdown" data-execution_count="6">
+<table class="caption-top table table-sm table-striped small">
+<caption>BFGS over the threshold-DP nLL at 6 values of <span class="math inline">\(\sigma\)</span></caption>
+<colgroup>
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: right;"><span class="math inline">\(\sigma\)</span></th>
+<th style="text-align: right;">Queries</th>
+<th style="text-align: right;">GCB_sig</th>
+<th style="text-align: right;">LN_sig</th>
+<th style="text-align: right;">Prolif_sig</th>
+<th style="text-align: right;">BMP6</th>
+<th style="text-align: right;">MHC2_sig</th>
+<th style="text-align: right;"><span class="math inline">\(\max_j \lvert \hat\beta_j - \hat\beta_j^{\text{centralized}} \rvert\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;"><span class="math inline">\(10^{-5}\)</span></td>
+<td style="text-align: right;">166</td>
+<td style="text-align: right;">0.000000</td>
+<td style="text-align: right;">0.000000</td>
+<td style="text-align: right;">0.000000</td>
+<td style="text-align: right;">0.000001</td>
+<td style="text-align: right;">0.000000</td>
+<td style="text-align: right;">0.319147</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><span class="math inline">\(10^{-4}\)</span></td>
+<td style="text-align: right;">144</td>
+<td style="text-align: right;">0.000001</td>
+<td style="text-align: right;">0.000001</td>
+<td style="text-align: right;">0.000000</td>
+<td style="text-align: right;">0.000002</td>
+<td style="text-align: right;">0.000001</td>
+<td style="text-align: right;">0.319147</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;"><span class="math inline">\(10^{-3}\)</span></td>
+<td style="text-align: right;">199</td>
+<td style="text-align: right;">0.000012</td>
+<td style="text-align: right;">0.000009</td>
+<td style="text-align: right;">0.000005</td>
+<td style="text-align: right;">0.000024</td>
+<td style="text-align: right;">0.000010</td>
+<td style="text-align: right;">0.319156</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><span class="math inline">\(10^{-2}\)</span></td>
+<td style="text-align: right;">199</td>
+<td style="text-align: right;">0.000012</td>
+<td style="text-align: right;">0.000009</td>
+<td style="text-align: right;">0.000005</td>
+<td style="text-align: right;">0.000025</td>
+<td style="text-align: right;">0.000010</td>
+<td style="text-align: right;">0.319156</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;"><span class="math inline">\(10^{-1}\)</span></td>
+<td style="text-align: right;">199</td>
+<td style="text-align: right;">0.000012</td>
+<td style="text-align: right;">0.000009</td>
+<td style="text-align: right;">0.000005</td>
+<td style="text-align: right;">0.000025</td>
+<td style="text-align: right;">0.000010</td>
+<td style="text-align: right;">0.319156</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><span class="math inline">\(1\)</span></td>
+<td style="text-align: right;">199</td>
+<td style="text-align: right;">0.000012</td>
+<td style="text-align: right;">0.000009</td>
+<td style="text-align: right;">0.000005</td>
+<td style="text-align: right;">0.000024</td>
+<td style="text-align: right;">0.000010</td>
+<td style="text-align: right;">0.319156</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>BFGS does not move from the zero starting point at any <span class="math inline">\(\sigma &gt; 0\)</span>; the rows show the starting values.</p>
+</section>
+<section id="neldermead-at-the-same-noise-scales" class="level2">
+<h2 class="anchored" data-anchor-id="neldermead-at-the-same-noise-scales">Nelder–Mead at the same noise scales</h2>
+<p>The same sweep with Nelder–Mead. The starting simplex adds 0.1 to one coordinate per vertex. The search stops when the spread of objective values over the simplex is at most <span class="math inline">\(1 \times 10^{-7}\)</span> relative to the starting value, or after 500 evaluations.</p>
+<div id="cd89694b" class="cell" data-execution_count="7">
+<div class="cell-output cell-output-display cell-output-markdown" data-execution_count="7">
+<table class="caption-top table table-sm table-striped small">
+<caption>Nelder–Mead over the threshold-DP nLL at 6 values of <span class="math inline">\(\sigma\)</span></caption>
+<colgroup>
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+<col style="width: 12%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: right;"><span class="math inline">\(\sigma\)</span></th>
+<th style="text-align: right;">Queries</th>
+<th style="text-align: right;">GCB_sig</th>
+<th style="text-align: right;">LN_sig</th>
+<th style="text-align: right;">Prolif_sig</th>
+<th style="text-align: right;">BMP6</th>
+<th style="text-align: right;">MHC2_sig</th>
+<th style="text-align: right;"><span class="math inline">\(\max_j \lvert \hat\beta_j - \hat\beta_j^{\text{centralized}} \rvert\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;"><span class="math inline">\(10^{-5}\)</span></td>
+<td style="text-align: right;">147</td>
+<td style="text-align: right;">-0.264116</td>
+<td style="text-align: right;">-0.253984</td>
+<td style="text-align: right;">0.303746</td>
+<td style="text-align: right;">0.304050</td>
+<td style="text-align: right;">-0.319394</td>
+<td style="text-align: right;">0.000620</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><span class="math inline">\(10^{-4}\)</span></td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">-0.264277</td>
+<td style="text-align: right;">-0.253462</td>
+<td style="text-align: right;">0.302743</td>
+<td style="text-align: right;">0.302900</td>
+<td style="text-align: right;">-0.319406</td>
+<td style="text-align: right;">0.000897</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;"><span class="math inline">\(10^{-3}\)</span></td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">-0.261806</td>
+<td style="text-align: right;">-0.255025</td>
+<td style="text-align: right;">0.315837</td>
+<td style="text-align: right;">0.301430</td>
+<td style="text-align: right;">-0.319236</td>
+<td style="text-align: right;">0.012712</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><span class="math inline">\(10^{-2}\)</span></td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">-0.260086</td>
+<td style="text-align: right;">-0.243787</td>
+<td style="text-align: right;">0.318555</td>
+<td style="text-align: right;">0.309170</td>
+<td style="text-align: right;">-0.314670</td>
+<td style="text-align: right;">0.015429</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;"><span class="math inline">\(10^{-1}\)</span></td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">-0.254677</td>
+<td style="text-align: right;">-0.232421</td>
+<td style="text-align: right;">0.331196</td>
+<td style="text-align: right;">0.328366</td>
+<td style="text-align: right;">-0.325162</td>
+<td style="text-align: right;">0.028070</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;"><span class="math inline">\(1\)</span></td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;">-0.117900</td>
+<td style="text-align: right;">-0.276456</td>
+<td style="text-align: right;">0.331867</td>
+<td style="text-align: right;">0.339219</td>
+<td style="text-align: right;">-0.301667</td>
+<td style="text-align: right;">0.145972</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>Fidelity decays as <span class="math inline">\(\sigma\)</span> grows.</p>
+</section>
+<section id="privacy-budget" class="level2">
+<h2 class="anchored" data-anchor-id="privacy-budget">Privacy budget</h2>
+<p>For the fits at the first three values of <span class="math inline">\(\sigma\)</span>, with sensitivity <span class="math inline">\(\Delta = 1\)</span> (placeholder) and target <span class="math inline">\(\delta = 10^{-5}\)</span>, zCDP composition gives:</p>
+<div id="a7233e96" class="cell" data-execution_count="8">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb5"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> zcdp_to_eps(rho, delta<span class="op">=</span><span class="fl">1e-5</span>):</span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> rho <span class="op">+</span> <span class="dv">2</span> <span class="op">*</span> np.sqrt(rho <span class="op">*</span> np.log(<span class="dv">1</span> <span class="op">/</span> delta))</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>first_three <span class="op">=</span> <span class="bu">sorted</span>(s <span class="cf">for</span> s <span class="kw">in</span> rows[<span class="st">"sigma"</span>].unique() <span class="cf">if</span> s <span class="op">&gt;</span> <span class="dv">0</span>)[:<span class="dv">3</span>]</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>budget <span class="op">=</span> pd.concat([</span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a>    rows[(rows[<span class="st">"method"</span>] <span class="op">==</span> m) <span class="op">&amp;</span> rows[<span class="st">"sigma"</span>].isin(first_three)][[<span class="st">"method"</span>, <span class="st">"sigma"</span>, <span class="st">"n_queries"</span>]]</span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a>    <span class="cf">for</span> m <span class="kw">in</span> (<span class="st">"BFGS"</span>, <span class="st">"Nelder-Mead"</span>)])</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>budget[<span class="st">"rho_per_query"</span>] <span class="op">=</span> (<span class="dv">1</span> <span class="op">/</span> budget[<span class="st">"sigma"</span>]) <span class="op">**</span> <span class="dv">2</span> <span class="op">/</span> <span class="dv">2</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>budget[<span class="st">"rho_total"</span>]     <span class="op">=</span> budget[<span class="st">"n_queries"</span>] <span class="op">*</span> budget[<span class="st">"rho_per_query"</span>]</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a>budget[<span class="st">"epsilon_at_delta_1e_minus_5"</span>] <span class="op">=</span> zcdp_to_eps(budget[<span class="st">"rho_total"</span>])</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+<div id="1c258dde" class="cell" data-execution_count="9">
+<div class="cell-output cell-output-display cell-output-markdown" data-execution_count="9">
+<table class="caption-top table table-sm table-striped small">
+<caption>zCDP composition; sensitivity <span class="math inline">\(\Delta = 1\)</span>, target <span class="math inline">\(\delta = 10^{-5}\)</span></caption>
+<colgroup>
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+<col style="width: 16%">
+</colgroup>
+<thead>
+<tr class="header">
+<th style="text-align: right;">Optimizer</th>
+<th style="text-align: right;"><span class="math inline">\(\sigma\)</span></th>
+<th style="text-align: right;">Queries <span class="math inline">\(k\)</span></th>
+<th style="text-align: right;"><span class="math inline">\(\rho\)</span> per query</th>
+<th style="text-align: right;"><span class="math inline">\(\rho_{\text{total}} = k\rho\)</span></th>
+<th style="text-align: right;"><span class="math inline">\(\varepsilon\)</span> at <span class="math inline">\(\delta = 10^{-5}\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">BFGS</td>
+<td style="text-align: right;"><span class="math inline">\(10^{-5}\)</span></td>
+<td style="text-align: right;">166</td>
+<td style="text-align: right;"><span class="math inline">\(5 \times 10^{9}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(8.3 \times 10^{11}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(8.3 \times 10^{11}\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">BFGS</td>
+<td style="text-align: right;"><span class="math inline">\(10^{-4}\)</span></td>
+<td style="text-align: right;">144</td>
+<td style="text-align: right;"><span class="math inline">\(5 \times 10^{7}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(7.2 \times 10^{9}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(7.201 \times 10^{9}\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">BFGS</td>
+<td style="text-align: right;"><span class="math inline">\(10^{-3}\)</span></td>
+<td style="text-align: right;">199</td>
+<td style="text-align: right;"><span class="math inline">\(5 \times 10^{5}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(9.95 \times 10^{7}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(9.957 \times 10^{7}\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">Nelder–Mead</td>
+<td style="text-align: right;"><span class="math inline">\(10^{-5}\)</span></td>
+<td style="text-align: right;">147</td>
+<td style="text-align: right;"><span class="math inline">\(5 \times 10^{9}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(7.35 \times 10^{11}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(7.35 \times 10^{11}\)</span></td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">Nelder–Mead</td>
+<td style="text-align: right;"><span class="math inline">\(10^{-4}\)</span></td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;"><span class="math inline">\(5 \times 10^{7}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(2.5 \times 10^{10}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(2.5 \times 10^{10}\)</span></td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">Nelder–Mead</td>
+<td style="text-align: right;"><span class="math inline">\(10^{-3}\)</span></td>
+<td style="text-align: right;">500</td>
+<td style="text-align: right;"><span class="math inline">\(5 \times 10^{5}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(2.5 \times 10^{8}\)</span></td>
+<td style="text-align: right;"><span class="math inline">\(2.501 \times 10^{8}\)</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>The <span class="math inline">\(\varepsilon\)</span> column shows that at noise levels where the fits are still close, <span class="math inline">\(\varepsilon\)</span> is large. Whether that is acceptable depends on the application.</p>
+<p>One could also explore tighter sensitivity bound <span class="math inline">\(\Delta\)</span> or allow far fewer queries, etc. We don’t do that here.</p>
+
+
+
+</section>
+
+<div id="quarto-appendix" class="default"><section class="quarto-appendix-contents" role="doc-bibliography" id="quarto-bibliography"><h2 class="anchored quarto-appendix-heading">References</h2><div id="refs" class="references csl-bib-body hanging-indent" role="list">
+<div id="ref-BunSteinke2016" class="csl-entry" role="listitem">
+Bun, Mark, and Thomas Steinke. 2016. <span>“Concentrated Differential Privacy: Simplifications, Extensions, and Lower Bounds.”</span> <em>Theory of Cryptography Conference (<span>TCC</span>)</em>, 635–58. <a href="https://doi.org/10.1007/978-3-662-53641-4_24">https://doi.org/10.1007/978-3-662-53641-4_24</a>.
+</div>
+<div id="ref-DworkRoth2014" class="csl-entry" role="listitem">
+Dwork, Cynthia, and Aaron Roth. 2014. <em>The Algorithmic Foundations of Differential Privacy</em>. Foundations and Trends in Theoretical Computer Science 9(3–4). Now Publishers. <a href="https://doi.org/10.1561/0400000042">https://doi.org/10.1561/0400000042</a>.
+</div>
+</div></section></div></main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp("https:\/\/bnaras\.github\.io\/homomorphepy");
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>
