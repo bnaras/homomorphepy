@@ -77,6 +77,11 @@ distributed protocols:
   threshold-FHE protocols above with site-side Gaussian noise.
   Demonstrations, not a privacy guarantee.
 
+## Citing
+
+The package and its protocols are described in @Narasimhan2026FHE,
+available at <https://arxiv.org/abs/2610.04163>.
+
 ## Source
 
 The code is on [GitHub](https://github.com/bnaras/homomorphepy).

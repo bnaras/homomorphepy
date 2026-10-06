@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use homomorphepy, please cite the paper below."
+type: software
+title: "homomorphepy"
+version: "1.0"
+license: MIT
+repository-code: "https://github.com/bnaras/homomorphepy"
+url: "https://bnaras.github.io/homomorphepy"
+authors:
+  - family-names: Narasimhan
+    given-names: Balasubramanian
+    orcid: "https://orcid.org/0000-0001-5852-7639"
+    affiliation: Stanford University
+preferred-citation:
+  type: article
+  title: "Fully Homomorphic Encryption for Statistical Modeling"
+  authors:
+    - family-names: Narasimhan
+      given-names: Balasubramanian
+      orcid: "https://orcid.org/0000-0001-5852-7639"
+      affiliation: Stanford University
+  year: 2026
+  journal: "arXiv"
+  notes: "arXiv:2610.04163 [stat.CO]"
+  doi: 10.48550/arXiv.2610.04163
+  url: "https://arxiv.org/abs/2610.04163"

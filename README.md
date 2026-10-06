@@ -157,6 +157,17 @@ uv run pytest            # add -m slow for the ADMM pipeline and DP sweeps
 uv run ruff check .
 ```
 
+## Citing
+
+The package and its protocols are described in
+
+> Narasimhan, B. (2026). Fully Homomorphic Encryption for Statistical
+> Modeling. arXiv:2610.04163 [stat.CO].
+> <https://arxiv.org/abs/2610.04163>
+
+`CITATION.cff` in this repository carries the same reference in
+machine-readable form.
+
 ## License
 
 MIT
